@@ -15,29 +15,36 @@ class MainPanel:
     def __init__(self):
         pass
 
-    def render(self, publications: List[Dict[str, Any]], email_handler=None):
-        """Отображение основной панели"""
+    def render(self, emails: list):
+        # Группируем письма по DOI
+        doi_groups = {}
+        for email in emails:
+            doi = email.get('doi', '').strip()
+            if not doi:
+                continue
+            if doi not in doi_groups:
+                doi_groups[doi] = []
+            doi_groups[doi].append(email)
 
-        if not publications:
-            st.info("📭 Нет писем с DOI для отображения")
-            st.markdown("""
-            ### Как начать работу:
-            1. 🔐 Подключитесь к вашему почтовому ящику в боковой панели
-            2. 📧 Убедитесь, что в ваших письмах содержатся DOI публикаций
-            3. 🔍 Используйте фильтры для поиска нужных публикаций
-            4. 📊 Анализируйте данные с помощью диаграмм
-            """)
-            return
-
-        # Заголовок с количеством публикаций
-        st.header(f"📚 Найдено публикаций: {len(publications)}")
-
-        # Группируем публикации по уникальным DOI
-        unique_publications = self._group_by_doi(publications)
-
-        # Отображаем карточки
-        for doi, pub_group in unique_publications.items():
-            self._render_publication_card(pub_group, email_handler)
+        for doi, group in doi_groups.items():
+            # Берем самое "богатое" по информации письмо (или первое)
+            main_email = group[0]
+            # Собираем агрегированные значения
+            ti = next((e.get('TI') or '' for e in group if e.get('TI')), '')
+            m3 = next((e.get('M3') or '' for e in group if e.get('M3')), '')
+            ty = next((e.get('TY') or '' for e in group if e.get('TY')), '')
+            year = next((e.get('PY') or '' for e in group if e.get('PY')), '')
+            authors = []
+            for e in group:
+                au = e.get('AU')
+                if au:
+                    if isinstance(au, list):
+                        authors += au
+                    else:
+                        authors.append(au)
+            authors = [a for a in authors if a]
+            first_author = authors[0] if authors else ''
+            last_author = authors[-1] if len(authors) > 1 else first_author
 
     def _group_by_doi(self, publications: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         """Группировка публикаций по уникальным DOI"""
