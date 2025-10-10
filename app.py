@@ -90,7 +90,7 @@ def main():
             if email_handler.connect(connection_data['email'], connection_data['password']):
                 st.session_state.connected = True
                 st.success("✅ Успешно подключен к почте!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("❌ Ошибка подключения к почте")
 
@@ -107,7 +107,7 @@ def main():
             email_handler.disconnect()
             st.session_state.connected = False
             st.session_state.publications = []
-            st.experimental_rerun()
+            st.rerun()
 
         # Секция фильтров
         filters = sidebar.render_filters_section(folders)
