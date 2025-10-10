@@ -1,6 +1,6 @@
 """
 Основная панель с карточками публикаций для Sci.Net.Node
-Вид: оглавление журнала на сером фоне, раскрытие деталей через горизонтальный разделитель со стрелкой
+Оглавление журнала: серая карточка-лента, раскрытие через горизонтальный разделитель со стрелкой
 """
 
 import streamlit as st
@@ -9,269 +9,282 @@ import pandas as pd
 from datetime import datetime
 from config import REQUEST_PATTERNS, SCINET_CORE_EMAIL
 import urllib.parse
-import re
 
-BRACKET_RE = re.compile(r"^\s*\[.*\]\s*$")
-MAILTO_RE = re.compile(r"^(href=|mailto:)", re.IGNORECASE)
+SECTION_DIVIDER_STYLE = """
+<style>
+.card-toc {
+  background: #f1f3f5; /* светло-серый фон для оглавления */
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin: 12px 0;
+}
+.card-toc:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.card-meta { color:#4d4d4d; font-size:0.95rem; }
+.hr-toggle {
+  cursor: pointer;
+  user-select: none;
+  margin: 8px 0 0 0;
+  padding: 6px 0;
+  display:flex; align-items:center; gap:8px;
+  color:#495057;
+  border-top: 1px solid #dee2e6; /* горизонтальный разделитель */
+}
+.hr-toggle .arrow { transition: transform .2s ease; }
+.hr-toggle.open .arrow { transform: rotate(180deg); }
+.details-pane {
+  background: #fafbfc; /* более светлый фон */
+  border: 1px solid #eceff1;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 8px 0 2px 0;
+}
+.badge { background:#e9ecef; border-radius:12px; padding:2px 8px; font-size:0.85rem; }
+</style>
+"""
 
 class MainPanel:
+    """Основная панель в виде оглавления журнала с уникальными DOI"""
+
     def __init__(self):
         pass
 
     def render(self, publications: List[Dict[str, Any]], email_handler=None):
         if not publications:
             st.info("📭 Нет писем с DOI для отображения")
+            st.markdown("""
+            ### Как начать работу:
+            1. 🔐 Подключитесь к вашему почтовому ящику в боковой панели
+            2. 📧 Убедитесь, что в ваших письмах содержатся DOI публикаций
+            3. 🔍 Используйте фильтры для поиска нужных публикаций
+            4. 📊 Анализируйте данные с помощью диаграмм
+            """)
             return
 
+        # Подключаем CSS стили
+        st.markdown(SECTION_DIVIDER_STYLE, unsafe_allow_html=True)
+
+        # Группировка по DOI (уникальные карточки)
         unique_publications = self._group_by_unique_doi(publications)
-
-        # Глобальные стили под "оглавление журнала"
-        st.markdown(
-            """
-            <style>
-            .toc-card {background:#f0f0f0;border-radius:10px;padding:14px 18px;margin:10px 0;border:1px solid #e0e0e0}
-            .toc-title {font-size:18px;font-weight:600;margin:0;color:#222}
-            .toc-meta {color:#555;font-size:14px;margin-top:6px}
-            .divider-toggle {display:flex;align-items:center;gap:8px;color:#444;cursor:pointer;margin:10px 0}
-            .divider-line {flex:1;height:1px;background:#cfcfcf}
-            .divider-arrow {font-size:16px}
-            .details-box {background:#fafafa;border:1px solid #e6e6e6;border-radius:8px;padding:14px;margin:8px 0}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
         st.header(f"📚 Найдено публикаций: {len(unique_publications)}")
 
-        for doi, pub in unique_publications.items():
-            self._render_toc_card(pub, email_handler)
+        # Лента карточек-оглавления
+        for doi, pub_data in unique_publications.items():
+            self._render_toc_card(pub_data, email_handler)
 
+    # ===== ГРУППИРОВКА И АГРЕГАЦИЯ =====
     def _group_by_unique_doi(self, publications: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         grouped: Dict[str, Dict[str, Any]] = {}
-        for p in publications:
-            doi = self._clean_doi(p.get("doi", ""))
+        for pub in publications:
+            doi = self._clean_doi(pub.get('doi', ''))
             if not doi:
                 continue
-            g = grouped.setdefault(
-                doi,
-                {
-                    "doi": doi,
-                    "title": "",
-                    "type": "",
-                    "year": "",
-                    "journal": "",
-                    "first_author": "",
-                    "last_author": "",
-                    "authors": set(),
-                    "keywords": set(),
-                    "notes": [],
-                    "emails": [],
-                },
-            )
-            # присваиваем первое валидное значение, исключая [] и mailto/html
-            def pick(field, value):
-                if g[field]:
-                    return
-                if not value:
-                    return
-                if isinstance(value, str):
-                    v = value.strip()
-                    if BRACKET_RE.match(v):
-                        return
-                    if field == "type" and MAILTO_RE.match(v):
-                        return
+            g = grouped.setdefault(doi, {
+                'doi': doi,
+                'title': '', 'type': '', 'year': '', 'journal': '',
+                'first_author': '', 'last_author': '', 'authors': set(),
+                'keywords': set(), 'abstract': '', 'notes': [],
+                'volume': '', 'issue': '', 'pages': '', 'emails': []
+            })
+            # Фильтрация значений: не брать текст в [квадратных скобках] и html/mailto
+            def acceptable(val):
+                if not isinstance(val, str):
+                    return True
+                s = val.strip()
+                if not s:
+                    return False
+                if s.startswith('[') and s.endswith(']'):
+                    return False
+                if s.startswith('href=') or s.startswith('mailto:'):
+                    return False
+                return True
+            for field in ['title','journal','volume','issue','pages','abstract']:
+                v = pub.get(field)
+                if v and not g[field] and acceptable(v):
                     g[field] = v
-                else:
-                    g[field] = value
-
-            pick("title", p.get("title"))
-            pick("journal", p.get("journal"))
-            pick("year", p.get("year"))
-            pt = p.get("type")
-            if pt and isinstance(pt, str) and not MAILTO_RE.match(pt) and not BRACKET_RE.match(pt.strip()):
-                if not g["type"]:
-                    g["type"] = pt
-
-            # авторы
-            authors = p.get("authors", [])
-            if isinstance(authors, list):
-                for a in authors:
-                    if a:
-                        g["authors"].add(str(a))
-            elif authors:
-                g["authors"].add(str(authors))
-
-            if not g["first_author"]:
-                if isinstance(authors, list) and authors:
-                    g["first_author"] = authors[0]
-                elif isinstance(authors, str):
-                    g["first_author"] = authors
-
-            if isinstance(authors, list) and len(authors) > 1:
-                g["last_author"] = authors[-1]
-
-            # ключевые слова
-            kws = p.get("keywords", [])
+            t = pub.get('type','')
+            if t and not g['type'] and acceptable(t):
+                g['type'] = t
+            y = pub.get('year','')
+            if y and not g['year'] and str(y).isdigit() and 1800 <= int(y) <= 2100:
+                g['year'] = str(y)
+            au = pub.get('authors', [])
+            if isinstance(au, list):
+                g['authors'].update([a for a in au if acceptable(a)])
+                if au and not g['first_author']:
+                    g['first_author'] = au[0]
+                if len(au) > 1:
+                    g['last_author'] = au[-1]
+            elif isinstance(au, str) and acceptable(au):
+                g['authors'].add(au)
+                if not g['first_author']:
+                    g['first_author'] = au
+            kws = pub.get('keywords', [])
             if isinstance(kws, list):
-                for k in kws:
-                    if k and not BRACKET_RE.match(str(k).strip()):
-                        g["keywords"].add(str(k))
-            elif kws:
-                if not BRACKET_RE.match(str(kws).strip()):
-                    g["keywords"].add(str(kws))
-
-            n = p.get("notes", "")
-            if n and not BRACKET_RE.match(str(n).strip()):
-                g["notes"].append(str(n))
-
-            g["emails"].append(
-                {
-                    "folder": p.get("folder", ""),
-                    "from": p.get("from", ""),
-                    "subject": p.get("subject", ""),
-                    "date": p.get("date", ""),
-                    "uid": p.get("uid", ""),
-                }
-            )
-
-        for v in grouped.values():
-            v["authors"] = sorted(list(v["authors"]))
-            v["keywords"] = sorted(list(v["keywords"]))
+                g['keywords'].update([k for k in kws if acceptable(k)])
+            elif isinstance(kws, str) and acceptable(kws):
+                g['keywords'].add(kws)
+            note = pub.get('notes','')
+            if isinstance(note, str) and acceptable(note) and note not in g['notes']:
+                g['notes'].append(note)
+            g['emails'].append({
+                'folder': pub.get('folder',''), 'from': pub.get('from',''),
+                'subject': pub.get('subject',''), 'date': pub.get('date',''), 'uid': pub.get('uid',''),
+                'text': pub.get('text',''), 'html': pub.get('html','')
+            })
+        for g in grouped.values():
+            g['authors'] = sorted(list(g['authors']))
+            g['keywords'] = sorted(list(g['keywords']))
         return grouped
 
     def _clean_doi(self, doi: str) -> str:
         if not doi:
-            return ""
-        d = str(doi).strip()
-        for pref in ("https://doi.org/", "http://doi.org/", "doi.org/", "DOI:", "doi:"):
-            if d.startswith(pref):
-                d = d[len(pref):]
-        return d.strip()
+            return ''
+        s = str(doi).strip()
+        for pref in ('https://doi.org/','http://doi.org/','doi.org/','DOI:','doi:'):
+            s = s.replace(pref,'')
+        return s.strip()
 
-    def _render_toc_card(self, pub: Dict[str, Any], email_handler=None):
-        doi = pub.get("doi", "")
-        title = pub.get("title", "Без названия")
-        year = pub.get("year", "Не указан")
-        journal = pub.get("journal", "Не указан")
-        ptype = pub.get("type", "Не указан")
-        first_author = pub.get("first_author", "")
-        last_author = pub.get("last_author", "")
+    # ===== КАРТОЧКА-ОГЛАВЛЕНИЕ =====
+    def _render_toc_card(self, pub_data: Dict[str, Any], email_handler=None):
+        doi = pub_data['doi']
+        title = pub_data.get('title') or 'Без названия'
+        meta_bits = []
+        if pub_data.get('type'): meta_bits.append(pub_data['type'])
+        if pub_data.get('year'): meta_bits.append(pub_data['year'])
+        if pub_data.get('journal'): meta_bits.append(pub_data['journal'])
+        fa = pub_data.get('first_author')
+        la = pub_data.get('last_author')
+        if fa and la and fa != la:
+            meta_bits.append(f"Авторы: {fa} – {la}")
+        elif fa:
+            meta_bits.append(f"Автор: {fa}")
 
-        with st.container():
-            st.markdown('<div class="toc-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="toc-title">{title}</div>', unsafe_allow_html=True)
-            meta = []
-            meta.append(f"DOI: <code>{doi}</code>")
-            if ptype:
-                meta.append(f"Тип: {ptype}")
-            if year:
-                meta.append(f"Год: {year}")
-            if journal:
-                meta.append(f"Журнал: {journal}")
-            if first_author:
-                tail = f" – {last_author}" if (last_author and last_author != first_author) else ""
-                meta.append(f"Авторы: {first_author}{tail}")
-            st.markdown(f'<div class="toc-meta">' + " • ".join(meta) + '</div>', unsafe_allow_html=True)
+        st.markdown("<div class='card-toc'>", unsafe_allow_html=True)
+        st.markdown(f"**{title}**")
+        meta_line = " • ".join([b for b in meta_bits if b])
+        st.markdown(f"<div class='card-meta'>DOI: <code>{doi}</code> • {meta_line}</div>", unsafe_allow_html=True)
 
-            # Горизонтальный разделитель со стрелкой
-            key = f"toggle_{doi}"
-            cols = st.columns([1, 10, 1])
-            with cols[0]:
-                pass
-            with cols[1]:
-                clicked = st.button("Показать детали", key=key)
-            with cols[2]:
-                st.markdown('<span class="divider-arrow">⬇️</span>', unsafe_allow_html=True)
-            st.markdown('<div class="divider-line"></div>', unsafe_allow_html=True)
+        # Разделитель со стрелкой и раскрытием деталей
+        key = f"details_{doi}"
+        is_open = st.toggle("Показать детали", key=key, value=False)
+        arrow_class = "hr-toggle open" if is_open else "hr-toggle"
+        st.markdown(f"<div class='{arrow_class}'><span class='arrow'>⬇️</span><span>Детали</span></div>", unsafe_allow_html=True)
 
-            # Состояние раскрытия (персистентность через session_state)
-            if key not in st.session_state:
-                st.session_state[key] = False
-            if clicked:
-                st.session_state[key] = not st.session_state[key]
+        if is_open:
+            st.markdown("<div class='details-pane'>", unsafe_allow_html=True)
+            self._render_details_tabs(pub_data, email_handler)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-            if st.session_state[key]:
-                with st.container():
-                    st.markdown('<div class="details-box">', unsafe_allow_html=True)
-                    self._render_details(pub, email_handler)
-                    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    def _render_details(self, pub: Dict[str, Any], email_handler=None):
-        tab1, tab2, tab3 = st.tabs(["📧 Письма", "📋 Данные", "🔗 Действия"])
-
+    # ===== ДЕТАЛИ =====
+    def _render_details_tabs(self, pub_data: Dict[str, Any], email_handler=None):
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 Данные", "📧 Письма", "🔗 Действия", "📊 Статистика"])
         with tab1:
-            self._render_emails_tab(pub.get("emails", []))
+            self._render_publication_data_tab(pub_data)
         with tab2:
-            self._render_publication_data_tab(pub)
+            self._render_emails_tab(pub_data.get('emails', []))
         with tab3:
-            self._render_actions_tab(pub, email_handler)
+            self._render_actions_tab(pub_data, email_handler)
+        with tab4:
+            self._render_stats_tab(pub_data)
 
-    def _render_publication_data_tab(self, pub: Dict[str, Any]):
+    def _render_publication_data_tab(self, pub_data: Dict[str, Any]):
         col1, col2 = st.columns(2)
         with col1:
-            authors = pub.get("authors", [])
+            st.subheader("📝 Основные данные")
+            authors = pub_data.get('authors', [])
             if authors:
                 st.markdown("**Авторы (AU):**")
-                for i, a in enumerate(authors[:12]):
-                    st.markdown(f"{i+1}. {a}")
-                if len(authors) > 12:
-                    st.markdown(f"*...и еще {len(authors)-12}*")
+                for i, author in enumerate(authors[:10]):
+                    st.markdown(f"{i+1}. {author}")
+                if len(authors) > 10:
+                    st.markdown(f"*...и еще {len(authors)-10} авторов*")
+            for label, field in [("Том (VL)", 'volume'), ("Выпуск (IS)", 'issue'), ("Страницы (SP)", 'pages')]:
+                v = pub_data.get(field)
+                if v:
+                    st.markdown(f"**{label}:** {v}")
         with col2:
-            keywords = pub.get("keywords", [])
+            st.subheader("🏷️ Метаданные")
+            keywords = pub_data.get('keywords', [])
             if keywords:
                 st.markdown("**Ключевые слова (KW/DE):**")
-                st.markdown(", ".join(keywords[:20]))
+                st.markdown(", ".join(keywords[:15]))
+                if len(keywords) > 15:
+                    st.markdown(f"*...и еще {len(keywords)-15} ключевых слов*")
+            abstract = pub_data.get('abstract', '')
+            if abstract:
+                st.markdown("**Абстракт (AB):**")
+                with st.expander("Показать абстракт"):
+                    st.markdown(abstract)
+            notes = pub_data.get('notes', [])
+            if notes:
+                st.markdown("**Заметки (N2/PA):**")
+                for i, note in enumerate(notes, 1):
+                    st.markdown(f"{i}. {note}")
 
     def _render_emails_tab(self, emails: List[Dict[str, Any]]):
-        st.subheader(f"Писем: {len(emails)}")
-        rows = []
-        for e in emails:
-            rows.append(
-                {
-                    "Папка": e.get("folder", ""),
-                    "От кого": e.get("from", ""),
-                    "Тема": (e.get("subject", "") or "")[:70] + ("…" if len(e.get("subject", "")) > 70 else ""),
-                    "Дата": e.get("date", ""),
-                    "UID": e.get("uid", ""),
-                }
-            )
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        else:
+        st.subheader(f"📧 Письма с этой публикацией ({len(emails)})")
+        if not emails:
             st.info("Нет писем для отображения")
-
-    def _render_actions_tab(self, pub: Dict[str, Any], email_handler=None):
-        doi = pub.get("doi", "")
-        title = pub.get("title", "")
-        if not doi:
-            st.warning("DOI отсутствует")
             return
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("Запросить M3"):
-                self._request("M3_REQUEST", doi, title, email_handler)
-            if st.button("Запросить PDF"):
-                self._request("PDF_REQUEST", doi, title, email_handler)
-        with col2:
-            if st.button("Запросить KW"):
-                self._request("KW_REQUEST", doi, title, email_handler)
-            if st.button("Запросить CITS"):
-                self._request("CITS_REQUEST", doi, title, email_handler)
-        with col3:
-            st.markdown(f"[DOI.org](https://doi.org/{doi})  ")
-            st.markdown(f"[Google Scholar](https://scholar.google.com/scholar?q={urllib.parse.quote(title)})  ")
-            st.markdown(f"[PubMed](https://pubmed.ncbi.nlm.nih.gov/?term={urllib.parse.quote(title)})")
+        for i, email in enumerate(emails, 1):
+            with st.expander(f"Письмо {i}: {email.get('subject','Без темы')[:60]}..."):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**📁 Папка:** {email.get('folder','Не указана')}")
+                    st.markdown(f"**👤 От кого:** {email.get('from','Не указан')}")
+                    st.markdown(f"**📅 Дата:** {self._format_date(email.get('date',''))}")
+                with col2:
+                    st.markdown(f"**🆔 UID:** {email.get('uid','Не указан')}")
+                txt = email.get('text','')
+                if txt:
+                    prev = txt[:300] + ("..." if len(txt) > 300 else "")
+                    st.markdown("**📄 Содержимое (превью):**")
+                    st.markdown(f"```\n{prev}\n```")
 
-    def _request(self, req: str, doi: str, title: str, email_handler=None):
-        pattern = REQUEST_PATTERNS.get(req, "[request]")
+    def _render_actions_tab(self, pub_data: Dict[str, Any], email_handler=None):
+        st.subheader("🔗 Доступные действия")
+        doi = pub_data.get('doi','')
+        title = pub_data.get('title','')
+        if not doi:
+            st.warning("DOI не найден для выполнения действий")
+            return
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            if st.button("📋 Тип работы", key=f"m3_{doi}"):
+                self._create_request_link("M3_REQUEST", doi, title, email_handler)
+            if st.button("📚 PDF файл", key=f"pdf_{doi}"):
+                self._create_request_link("PDF_REQUEST", doi, title, email_handler)
+        with col2:
+            if st.button("🎯 Ключевые слова", key=f"kw_{doi}"):
+                self._create_request_link("KW_REQUEST", doi, title, email_handler)
+            if st.button("📖 Цитирования", key=f"cits_{doi}"):
+                self._create_request_link("CITS_REQUEST", doi, title, email_handler)
+        with col3:
+            st.markdown(f"[🔗 DOI.org](https://doi.org/{doi})")
+            st.markdown(f"[🎓 Google Scholar](https://scholar.google.com/scholar?q={urllib.parse.quote(title)})")
+        with col4:
+            st.markdown(f"[📚 PubMed](https://pubmed.ncbi.nlm.nih.gov/?term={urllib.parse.quote(title)})")
+
+    def _create_request_link(self, request_type: str, doi: str, title: str, email_handler=None):
+        pattern = REQUEST_PATTERNS.get(request_type, "[request]")
         body = f"{pattern} https://doi.org/{doi}"
         mailto_link = f"mailto:{SCINET_CORE_EMAIL}?subject={urllib.parse.quote(title)}&body={urllib.parse.quote(body)}"
-        st.markdown(f"[📧 Открыть почтовый клиент]({mailto_link})")
+        st.success("🔗 Ссылка для запроса создана:")
+        st.markdown(f"[📧 Открыть в почтовом клиенте]({mailto_link})")
         if email_handler and email_handler.connected:
-            if st.button("📤 Отправить сейчас"):
+            if st.button("📤 Отправить запрос", key=f"send_{request_type}_{doi}"):
                 if email_handler.send_request_email(title, body):
-                    st.success("Отправлено")
+                    st.success("✅ Запрос отправлен!")
                 else:
-                    st.error("Ошибка отправки")
+                    st.error("❌ Ошибка отправки запроса")
+
+    def _format_date(self, date_obj):
+        if isinstance(date_obj, datetime):
+            return date_obj.strftime('%Y-%m-%d %H:%M')
+        elif isinstance(date_obj, str):
+            return date_obj
+        else:
+            return str(date_obj) if date_obj else 'Не указана'
