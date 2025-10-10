@@ -1,111 +1,95 @@
+\"\"\"Основная панель с карточками писем для Sci.Net.Node\"\"\"
+
 import streamlit as st
 from typing import List, Dict, Any
-import pandas as pd
 from datetime import datetime
-from config import REQUEST_PATTERNS, SCINET_CORE_EMAIL
 import urllib.parse
 
-
 class MainPanel:
-    """Класс для основной панели с отображением карточек публикаций"""
-
-    def __init__(self):
-        pass
+    \"\"\"Класс для отображения карточек писем, проходящих через фильтры\"\"\"
 
     def render(self, emails: List[Dict[str, Any]], email_handler=None):
-        """
-        Отображение основной панели
-        emails - список писем, которые прошли через фильтры боковой панели
-        """
+        \"\"\"Отображение писем как карточек\"\"\"
         if not emails:
-            st.info("📭 Нет писем с DOI для отображения")
+            st.info(\"📭 Нет писем, соответствующих текущим фильтрам\")
             return
 
-        st.header(f"📚 Найдено писем: {len(emails)}")
+        st.header(f\"📧 Показано писем: {len(emails)}\")
 
-        # Создаем словарь для группировки по уникальным DOI
-        grouped = {}
         for email in emails:
-            doi = self.extract_first_doi(email.get('text', ''))
-            if not doi:
-                continue
+            self._render_email_card(email, email_handler)
 
-            if doi not in grouped:
-                grouped[doi] = []
-            grouped[doi].append(email)
+    def _render_email_card(self, email: Dict[str, Any], email_handler=None):
+        with st.container():
+            st.markdown(
+                \"\"\"<div style=\"border: 1px solid #ddd; border-radius: 10px; padding: 15px; margin: 10px 0; background-color: #f0f8ff;\">\"\"\",
+                unsafe_allow_html=True)
+            
+            subject = email.get('subject', 'Без темы')
+            date = email.get('date')
+            date_str = date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else str(date)
+            folder = email.get('folder', '')
+            doi = email.get('doi', '')
 
-        # Формируем карточки для уникальных DOI
-        for doi, group_emails in grouped.items():
-            merged_data = self.merge_email_data(group_emails)
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.markdown(f\"### {subject}\")
+                if doi:
+                    st.markdown(f\"**DOI:** [{doi}](https://doi.org/{doi})\")
+                st.markdown(f\"**Папка:** {folder}\")
+                st.markdown(f\"**Дата:** {date_str}\")
 
-            with st.container():
-                st.markdown(
-                    """<div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px; margin: 10px 0; background-color: #f9f9f9;">""",
-                    unsafe_allow_html=True)
+            with col2:
+                expanded = st.checkbox(\"Показать детали\", key=f\"details_{email.get('uid', '')}\")
 
-                st.markdown(f"### 📄 DOI: [{doi}](https://doi.org/{doi})")
+            if expanded:
+                st.markdown(\"---\")
+                self._render_email_details(email, email_handler)
 
-                pub_type = merged_data.get('type', 'Не указан')
-                year = merged_data.get('year', 'Не указан')
-                title = merged_data.get('title', 'Без названия')
-                st.markdown(f"**Тип (M3/PY):** {pub_type}")
-                st.markdown(f"**Название (TI):** {title}")
-                st.markdown(f"**Год (PY):** {year}")
+            st.markdown(\"</div>\", unsafe_allow_html=True)
 
-                authors = merged_data.get('authors', [])
-                if authors:
-                    first_author = authors[0]
-                    last_author = authors[-1] if len(authors) > 1 else ''
-                    st.markdown(f"**Первый автор:** {first_author}")
-                    if last_author and last_author != first_author:
-                        st.markdown(f"**Последний автор:** {last_author}")
+    def _render_email_details(self, email: Dict[str, Any], email_handler=None):
+        st.subheader(\"Подробности письма\")
 
-                st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(f\"**От:** {email.get('from', '')}\")
+        st.markdown(f\"**Кому:** {email.get('to', '')}\")
+        st.markdown(f\"**Тема:** {email.get('subject', '')}\")
+        st.markdown(f\"**Дата:** {email.get('date', '')}\")
 
-    def extract_first_doi(self, text: str) -> str:
-        """Извлечение первого DOI из текста письма"""
-        import re
-        doi_pattern = r'\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b'
-        matches = re.findall(doi_pattern, text, re.IGNORECASE)
-        return matches[0] if matches else ''
+        # Отобразить тело письма (текст или HTML как plain text)
+        text = email.get('text', '')
+        if text:
+            st.markdown(\"**Тело письма:**\")
+            st.text_area(\"\", text, height=200)
+        else:
+            st.info(\"Текст письма отсутствует\")
 
-    def merge_email_data(self, emails: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Объединение данных из всех писем с одним DOI.
-        Значения берутся с приоритетом первого найденного или последнего для списка авторов.
-        """
-        merged = {
-            'type': '',
-            'year': '',
-            'title': '',
-            'authors': []
+        # Кнопки запросов Sci.Net.Core
+        if not email_handler or not email_handler.connected:
+            st.info(\"Подключитесь к почтовому ящику для отправки запросов\")
+            return
+
+        doi = email.get('doi', '')
+        subject = email.get('subject', '')
+        request_types = {
+            \"M3\": \"[M3 request]\",
+            \"PDF\": \"[PDF request]\",
+            \"PubMed\": \"[PMID request]\",
+            \"Citations\": \"[CITS request]\",
+            \"Insert Abstract\": \"[insert abstract]\",
+            \"Insert Keywords\": \"[insert authors keywords]\",
+            \"Insert Notes\": \"[insert notes]\"
         }
 
-        for email in emails:
-            # Получаем RIS данные из письма, если они есть
-            ris_data = email.get('ris_data', {})
+        st.markdown(\"🔗 **Доступные запросы к Sci.Net.Core:**\")
 
-            # Тип публикации (M3, если нет - TY)
-            type_val = ris_data.get('M3') or ris_data.get('TY')
-            if type_val and not merged['type']:
-                merged['type'] = type_val
-
-            # Год публикации PY
-            year_val = ris_data.get('PY')
-            if year_val and not merged['year']:
-                merged['year'] = year_val
-
-            # Название TI
-            title_val = ris_data.get('TI')
-            if title_val and not merged['title']:
-                merged['title'] = title_val
-
-            # Авторы AU - берем в виде списка, последний список авторов приоритетен
-            authors_val = ris_data.get('AU')
-            if authors_val:
-                if isinstance(authors_val, list):
-                    merged['authors'] = authors_val
+        cols = st.columns(4)
+        for i, (label, pattern) in enumerate(request_types.items()):
+            if cols[i % 4].button(label, key=f\"req_{label}_{email.get('uid', '')}\"):
+                body = f\"{pattern} {doi}\" if doi else pattern
+                sent = email_handler.send_request_email(subject, body)
+                if sent:
+                    st.success(f\"Запрос '{label}' отправлен.\")
                 else:
-                    merged['authors'] = [authors_val]
+                    st.error(f\"Ошибка отправки запроса '{label}'.\")
 
-        return merged
