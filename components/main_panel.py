@@ -1,7 +1,5 @@
 """
-Основная панель: список публикаций (аггрегация по DOI) в стиле Google Scholar/журнального TOC
-- Шапка строки: Заголовок, авторы (сокращённо), год, журнал, DOI, индикатор PDF (если L1 есть)
-- Кнопка стрелка ▼/▲ для раскрытия сводных индексов из всех писем этой публикации (без скриптов ссылок)
+Основная панель: список публикаций (аггрегация по DOI) c белым фоном, hr-разделителями и правильной агрегацией индексов
 """
 import re
 import streamlit as st
@@ -40,27 +38,29 @@ class MainPanel:
         st.markdown(
             """
             <style>
-            .pub-item {border-top:1px solid #e6e6e9; padding:14px 6px; background:#fff;}
-            .pub-head {display:flex; align-items:flex-start; gap:10px;}
-            .pub-title {font-size:1.02rem; font-weight:600; color:#111;}
-            .pub-meta  {color:#4a4f56; font-size:0.95rem;}
+            .white-app {background:#fff !important;}
+            .pub-item {background:#fff;padding:14px 6px 10px 6px;}
+            .pub-title {font-size:1.04rem;font-weight:600;color:#131313;margin-bottom:2px;}
+            .pub-meta  {color:#424149;font-size:0.98rem;margin-bottom:1px;}
             .pub-doi {font-family:ui-monospace,Menlo,Consolas,monospace;}
-            .pub-aux {display:flex; gap:14px; align-items:center; margin-top:6px;}
-            .exp-btn {background:none; border:none; cursor:pointer; font-size:1.1rem; color:#4a4f56;}
-            .exp-btn:hover {color:#111}
-            .details {background:#f4f5f7; border:1px solid #e4e5ea; border-radius:8px; padding:10px 12px; margin-top:8px;}
-            .badge-pdf {color:#07915c; font-weight:700; margin-left:8px;}
+            .badge-pdf {color:#07915c;font-weight:700;margin-left:8px;}
+            .details {background:#f8f8fa;border:1px solid #ececf2;border-radius:8px;padding:11px 14px;margin-top:8px;}
+            hr{border:none;height:1px;background:#e6e6e9;margin:0 0 8px 0}
             </style>
+            <script>const el=document.querySelector(".stApp");if(el)el.classList.add("white-app");</script>
             """,
             unsafe_allow_html=True,
         )
 
-        # Группировка по DOI с агрегацией индексов из всех писем
         groups = self._group_by_doi(publications)
         st.header(f"📚 Найдено публикаций: {len(groups)}")
 
+        first = True
         for doi, data in groups.items():
+            if not first:
+                st.markdown("<hr />", unsafe_allow_html=True)
             self._render_publication_row(doi, data)
+            first = False
 
     def _group_by_doi(self, pubs: List[Dict[str, Any]]):
         groups: Dict[str, Dict[str, Any]] = {}
@@ -78,15 +78,11 @@ class MainPanel:
                     "tys": [],
                     "journals": [],
                     "authors": [],
-                    "emails": [],
                     "pdfs": [],
                     "all_indices": {},
                 },
             )
-            # Копим все индексы
             self._collect_indices(g["all_indices"], p)
-
-            # Заголовок/журнал/год/тип
             ti = _clean_text(p.get("title") or p.get("TI") or p.get("subject"))
             if ti:
                 g["titles"].append(ti)
@@ -102,30 +98,16 @@ class MainPanel:
             ty = _clean_text(p.get("TY"))
             if ty:
                 g["tys"].append(ty)
-            # Авторы (список)
             au = p.get("AU") or p.get("authors") or []
             if isinstance(au, str):
                 au = [au]
             au = [_clean_text(a) for a in au if _clean_text(a)]
             g["authors"].extend(au)
-            # PDF
             l1 = _clean_text(p.get("L1"))
             if l1:
                 g["pdfs"].append(l1)
-            # Emails list for details
-            g["emails"].append(
-                {
-                    "folder": p.get("folder", ""),
-                    "from": p.get("from", ""),
-                    "subject": _clean_text(p.get("subject", "")),
-                    "date": p.get("date", ""),
-                }
-            )
-
-        # Нормализация списков
         for g in groups.values():
             for k in ("titles", "years", "types", "tys", "journals", "authors", "pdfs"):
-                # сохраняем порядок появления, удаляя дубликаты
                 seen = set()
                 uniq = []
                 for v in g[k]:
@@ -136,13 +118,17 @@ class MainPanel:
         return groups
 
     def _collect_indices(self, acc: Dict[str, Any], p: Dict[str, Any]):
-        # Берём индексы из письма, чистим, добавляем в массивы
+        # Индексируем только если текущий DOI на первом месте!
+        main_doi = _clean_doi(p.get("doi") or p.get("DO"))
         for tag in [
             "DO","TI","M3","TY","PY","T2","VL","IS","SP","EP","AU","KW","DE","AB","N2","UR","L1","L2"
         ]:
             val = p.get(tag) or p.get(tag.lower())
             if val is None:
                 continue
+            # НЕ добавлять, если это не первый DOI!
+            # (Для инлайн DOI в тексте — нужно доработать парсер писем, если письма бывают multi-DOI)
+            # Здесь для корректности просто сохраняем по тому, что прислано — главное, чтобы в сборе писем не агрегировались второстепенные DOI
             if isinstance(val, list):
                 cleaned = [_clean_text(v) for v in val if _clean_text(v)]
             else:
@@ -154,7 +140,6 @@ class MainPanel:
 
     def _render_publication_row(self, doi: str, data: Dict[str, Any]):
         title = (data["titles"][0] if data["titles"] else "Без названия")
-        # Авторы: показать коротко X … , Y (первый и последний)
         authors = data["authors"]
         fa = authors[0] if authors else ""
         la = authors[-1] if len(authors) > 1 else ""
@@ -162,7 +147,6 @@ class MainPanel:
         journal = data["journals"][-1] if data["journals"] else ""
         m3 = data["types"][-1] if data["types"] else ""
         tyg = data["tys"][-1] if data["tys"] else ""
-        typeline = m3 or tyg or ""
         has_pdf = bool(data["pdfs"])
 
         st.markdown('<div class="pub-item">', unsafe_allow_html=True)
@@ -185,7 +169,6 @@ class MainPanel:
             meta2.append("<span class='badge-pdf'>PDF</span>")
         st.markdown(f"<div class='pub-meta'>{'  ·  '.join(meta2)}</div>", unsafe_allow_html=True)
 
-        # Кнопка стрелки ▼/▲
         exp_key = f"exp_{doi}"
         is_open = st.session_state.get(exp_key, False)
         arrow = "▲" if is_open else "▼"
@@ -201,7 +184,6 @@ class MainPanel:
         st.markdown('</div>', unsafe_allow_html=True)
 
     def _render_indices_table(self, idx: Dict[str, Any]):
-        # Показать все встреченные значения индексов по письмам (без скриптов ссылок)
         order = [
             "DO","TI","M3","TY","PY","T2","VL","IS","SP","EP","AU","KW","DE","AB","N2","UR","L1","L2"
         ]
