@@ -1,135 +1,214 @@
 """
-Основная панель: карточки писем после фильтров, стиль оглавления журнала, раскр. по кнопке Подробнее, очистка HTML
+Основная панель: список публикаций (аггрегация по DOI) в стиле Google Scholar/журнального TOC
+- Шапка строки: Заголовок, авторы (сокращённо), год, журнал, DOI, индикатор PDF (если L1 есть)
+- Кнопка стрелка ▼/▲ для раскрытия сводных индексов из всех писем этой публикации (без скриптов ссылок)
 """
 import re
 import streamlit as st
 from typing import List, Dict, Any
 from datetime import datetime
-from config import REQUEST_PATTERNS, SCINET_CORE_EMAIL
-import urllib.parse
 
 CLEAN_TAG_RE = re.compile(r"<[^>]+>")
-MAILTO_RE = re.compile(r"^(mailto:|href=)", re.IGNORECASE)
-BRACKETS_RE = re.compile(r"^\s*\[.*\]\s*$")
+LINK_SCRIPT_RE = re.compile(r"(?i)(javascript:|data:|mailto:|href=)")
 
-def clean_val(val):
-    if val is None:
-        return ''
-    val = str(val)
-    val = CLEAN_TAG_RE.sub('', val)
-    val = re.sub(r"mailto:|href=", '', val)
-    val = val.strip()
-    return val
+
+def _clean_text(v: Any) -> str:
+    if v is None:
+        return ""
+    s = str(v)
+    s = CLEAN_TAG_RE.sub(" ", s)
+    s = LINK_SCRIPT_RE.sub("", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _clean_doi(doi: str) -> str:
+    if not doi:
+        return ""
+    s = str(doi).strip()
+    for pref in ["https://doi.org/", "http://doi.org/", "doi.org/", "DOI:", "doi:"]:
+        s = s.replace(pref, "")
+    return s.strip()
+
 
 class MainPanel:
-    """Основная панель: карточки для каждого письма после применения фильтров"""
-    def __init__(self):
-        pass
-
     def render(self, publications: List[Dict[str, Any]], email_handler=None):
-        st.markdown(
-            '''<style>
-                .stApp {background-color: #23242a;}
-                section[data-testid="stSidebar"] {background-color: #262833;}
-                .card {background:#e8e9ea; border-radius: 10px; padding:16px 18px; margin:16px 0 0 0;}
-                .toc-main {display:flex;gap:10px;align-items:center; color:#222; font-size:1.1rem;}
-                .toc-doi {font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#f1f3f6;padding:1px 7px 1px 7px;border-radius:6px;font-size:0.97rem;letter-spacing:0.03em;}
-                .toc-ti {font-weight:700; word-break:break-word;flex-grow:1;}
-                .toc-meta {color:#3a444e; font-size:0.98rem;}
-                .btn-more {width:100%; display:block; text-align:center; letter-spacing:0.01em; background:#cfd1d6;border:1px solid #b9bac1;border-radius:20px;padding:6px 0 6px 0; cursor:pointer; font-size:1.02rem;}
-                .btn-more:hover {background:#b1b2b7;}
-                .details-pane {background:#f7f7fa; border-radius:10px; margin-top:2px; padding:18px 18px 10px 18px;}
-            </style>''', unsafe_allow_html=True)
-
         if not publications:
-            st.info("📭 Нет писем с публикациями для отображения")
+            st.info("📭 Нет публикаций для отображения")
             return
 
-        st.header(f"📚 Найдено писем: {len(publications)}")
+        st.markdown(
+            """
+            <style>
+            .pub-item {border-top:1px solid #e6e6e9; padding:14px 6px; background:#fff;}
+            .pub-head {display:flex; align-items:flex-start; gap:10px;}
+            .pub-title {font-size:1.02rem; font-weight:600; color:#111;}
+            .pub-meta  {color:#4a4f56; font-size:0.95rem;}
+            .pub-doi {font-family:ui-monospace,Menlo,Consolas,monospace;}
+            .pub-aux {display:flex; gap:14px; align-items:center; margin-top:6px;}
+            .exp-btn {background:none; border:none; cursor:pointer; font-size:1.1rem; color:#4a4f56;}
+            .exp-btn:hover {color:#111}
+            .details {background:#f4f5f7; border:1px solid #e4e5ea; border-radius:8px; padding:10px 12px; margin-top:8px;}
+            .badge-pdf {color:#07915c; font-weight:700; margin-left:8px;}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        for idx, pub in enumerate(publications, 1):
-            self._render_letter_card(pub, key=f"letter_{idx}")
+        # Группировка по DOI с агрегацией индексов из всех писем
+        groups = self._group_by_doi(publications)
+        st.header(f"📚 Найдено публикаций: {len(groups)}")
 
-    def _get_last(self, v):
-        if isinstance(v, list) and v:
-            return v[-1]
-        return v if v else ''
+        for doi, data in groups.items():
+            self._render_publication_row(doi, data)
 
-    def _render_letter_card(self, pub: Dict[str, Any], key: str):
-        # TI (или тема письма если пусто)
-        ti = clean_val(pub.get('title') or pub.get('TI') or pub.get('subject') or '')
-        doi = self._clean_doi(pub.get('doi',''))
-        # M3 или, если нет, TY, иначе "Не указан"
-        pub_type = clean_val(pub.get('M3') or pub.get('type') or pub.get('TY') or 'Не указан')
-        # PY
-        year = clean_val(self._get_last(pub.get('PY') or pub.get('year')) or 'Не указан')
-        # AU: показать первый и последний
-        au = pub.get('AU') or pub.get('authors') or []
-        if isinstance(au, str):
-            au = [au]
-        au = [clean_val(x) for x in au if x and not BRACKETS_RE.match(str(x))]
-        fa = au[0] if au else ''
-        la = au[-1] if au and len(au)>1 else (fa if fa else '')
-        # CARD
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        header = f"""
-          <div class='toc-main'>
-            <span class='toc-ti'>{ti}</span>
-            <span class='toc-doi'>DOI: {doi}</span>
-            <span class='toc-meta'>• {pub_type} • {year}</span>
-            <span class='toc-meta'>• {fa}{' – ' + la if la and fa and la != fa else ''}</span>
-          </div>
-        """
-        st.markdown(header, unsafe_allow_html=True)
-        # Toggle-кнопка Подробнее/Скрыть
-        exp_state = st.session_state.get(f"exp_{key}", False)
-        label = "Скрыть ▲" if exp_state else "Подробнее ▼"
-        if st.button(label, key=f"btn_{key}", use_container_width=True):
-            st.session_state[f"exp_{key}"] = not exp_state
-            exp_state = not exp_state
-        if exp_state:
-            st.markdown('<div class="details-pane">', unsafe_allow_html=True)
-            self._render_details(pub)
+    def _group_by_doi(self, pubs: List[Dict[str, Any]]):
+        groups: Dict[str, Dict[str, Any]] = {}
+        for p in pubs:
+            doi = _clean_doi(p.get("doi") or p.get("DO"))
+            if not doi:
+                continue
+            g = groups.setdefault(
+                doi,
+                {
+                    "doi": doi,
+                    "titles": [],
+                    "years": [],
+                    "types": [],
+                    "tys": [],
+                    "journals": [],
+                    "authors": [],
+                    "emails": [],
+                    "pdfs": [],
+                    "all_indices": {},
+                },
+            )
+            # Копим все индексы
+            self._collect_indices(g["all_indices"], p)
+
+            # Заголовок/журнал/год/тип
+            ti = _clean_text(p.get("title") or p.get("TI") or p.get("subject"))
+            if ti:
+                g["titles"].append(ti)
+            jr = _clean_text(p.get("journal") or p.get("T2"))
+            if jr:
+                g["journals"].append(jr)
+            py = _clean_text(p.get("year") or p.get("PY"))
+            if py:
+                g["years"].append(py)
+            m3 = _clean_text(p.get("M3") or p.get("type"))
+            if m3:
+                g["types"].append(m3)
+            ty = _clean_text(p.get("TY"))
+            if ty:
+                g["tys"].append(ty)
+            # Авторы (список)
+            au = p.get("AU") or p.get("authors") or []
+            if isinstance(au, str):
+                au = [au]
+            au = [_clean_text(a) for a in au if _clean_text(a)]
+            g["authors"].extend(au)
+            # PDF
+            l1 = _clean_text(p.get("L1"))
+            if l1:
+                g["pdfs"].append(l1)
+            # Emails list for details
+            g["emails"].append(
+                {
+                    "folder": p.get("folder", ""),
+                    "from": p.get("from", ""),
+                    "subject": _clean_text(p.get("subject", "")),
+                    "date": p.get("date", ""),
+                }
+            )
+
+        # Нормализация списков
+        for g in groups.values():
+            for k in ("titles", "years", "types", "tys", "journals", "authors", "pdfs"):
+                # сохраняем порядок появления, удаляя дубликаты
+                seen = set()
+                uniq = []
+                for v in g[k]:
+                    if v not in seen:
+                        uniq.append(v)
+                        seen.add(v)
+                g[k] = uniq
+        return groups
+
+    def _collect_indices(self, acc: Dict[str, Any], p: Dict[str, Any]):
+        # Берём индексы из письма, чистим, добавляем в массивы
+        for tag in [
+            "DO","TI","M3","TY","PY","T2","VL","IS","SP","EP","AU","KW","DE","AB","N2","UR","L1","L2"
+        ]:
+            val = p.get(tag) or p.get(tag.lower())
+            if val is None:
+                continue
+            if isinstance(val, list):
+                cleaned = [_clean_text(v) for v in val if _clean_text(v)]
+            else:
+                cleaned = [_clean_text(val)] if _clean_text(val) else []
+            if not cleaned:
+                continue
+            arr = acc.setdefault(tag, [])
+            arr.extend(cleaned)
+
+    def _render_publication_row(self, doi: str, data: Dict[str, Any]):
+        title = (data["titles"][0] if data["titles"] else "Без названия")
+        # Авторы: показать коротко X … , Y (первый и последний)
+        authors = data["authors"]
+        fa = authors[0] if authors else ""
+        la = authors[-1] if len(authors) > 1 else ""
+        year = data["years"][-1] if data["years"] else ""
+        journal = data["journals"][-1] if data["journals"] else ""
+        m3 = data["types"][-1] if data["types"] else ""
+        tyg = data["tys"][-1] if data["tys"] else ""
+        typeline = m3 or tyg or ""
+        has_pdf = bool(data["pdfs"])
+
+        st.markdown('<div class="pub-item">', unsafe_allow_html=True)
+        st.markdown(f"<div class='pub-title'>{title}</div>", unsafe_allow_html=True)
+        meta1 = []
+        if fa:
+            meta1.append(_clean_text(fa))
+        if la and la != fa:
+            meta1.append("…")
+            meta1.append(_clean_text(la))
+        if journal:
+            meta1.append(_clean_text(journal))
+        st.markdown(f"<div class='pub-meta'>{' · '.join(meta1)}</div>", unsafe_allow_html=True)
+
+        meta2 = []
+        if year:
+            meta2.append(_clean_text(year))
+        meta2.append(f"DOI: <span class='pub-doi'>{doi}</span>")
+        if has_pdf:
+            meta2.append("<span class='badge-pdf'>PDF</span>")
+        st.markdown(f"<div class='pub-meta'>{'  ·  '.join(meta2)}</div>", unsafe_allow_html=True)
+
+        # Кнопка стрелки ▼/▲
+        exp_key = f"exp_{doi}"
+        is_open = st.session_state.get(exp_key, False)
+        arrow = "▲" if is_open else "▼"
+        if st.button(arrow, key=f"btn_{doi}", help="Показать/скрыть индексы", type="secondary"):
+            st.session_state[exp_key] = not is_open
+            is_open = not is_open
+        
+        if is_open:
+            st.markdown('<div class="details">', unsafe_allow_html=True)
+            self._render_indices_table(data["all_indices"])
             st.markdown('</div>', unsafe_allow_html=True)
+
         st.markdown('</div>', unsafe_allow_html=True)
 
-    def _render_details(self, pub: Dict[str, Any]):
-        def show(val):
-            if isinstance(val,list):
-                for v in val:
-                    v = clean_val(v)
-                    if v: st.markdown(f"- {v}")
-            else:
-                v = clean_val(val)
-                if v: st.markdown(f"{v}")
-        indices = [
-            ('DOI', pub.get('doi') or pub.get('DO')), ('TI', pub.get('title') or pub.get('TI')),
-            ('M3', pub.get('M3') or pub.get('type')), ('TY', pub.get('TY')),
-            ('PY', pub.get('PY') or pub.get('year')), ('T2', pub.get('T2') or pub.get('journal')),
-            ('VL', pub.get('VL') or pub.get('volume')), ('IS', pub.get('IS') or pub.get('issue')),
-            ('SP', pub.get('SP') or pub.get('pages')), ('EP', pub.get('EP')),
-            ('AU', pub.get('AU') or pub.get('authors')), ('KW', pub.get('KW') or pub.get('keywords')),
-            ('DE', pub.get('DE')), ('AB', pub.get('AB') or pub.get('abstract')),
-            ('N2', pub.get('N2') or pub.get('notes')), ('UR', pub.get('UR')),
-            ('L1', pub.get('L1')),('L2', pub.get('L2'))
+    def _render_indices_table(self, idx: Dict[str, Any]):
+        # Показать все встреченные значения индексов по письмам (без скриптов ссылок)
+        order = [
+            "DO","TI","M3","TY","PY","T2","VL","IS","SP","EP","AU","KW","DE","AB","N2","UR","L1","L2"
         ]
-        for label, val in indices:
-            if val:
-                st.markdown(f"**{label}:**")
-                show(val)
-        # мета info из письма
-        meta = []
-        for k in ('folder','from','subject','date','uid'):
-            v = pub.get(k)
-            if v: meta.append(f"{k.capitalize()}: {clean_val(v)}")
-        if meta:
-            st.markdown("**Метаданные письма:**")
-            for line in meta:
-                st.markdown(line)
-
-    def _clean_doi(self, doi: str) -> str:
-        if not doi: return ''
-        doi = str(doi).strip()
-        for pref in ['https://doi.org/','http://doi.org/','doi.org/','DOI:','doi:']:
-            doi = doi.replace(pref,'')
-        return doi.strip()
+        for tag in order:
+            vals = list(dict.fromkeys(idx.get(tag, [])))
+            if not vals:
+                continue
+            st.markdown(f"**{tag}:**")
+            for v in vals:
+                st.markdown(f"- {_clean_text(v)}")
