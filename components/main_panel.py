@@ -3,14 +3,17 @@
 - Надёжное переключение стрелки по состоянию exp_key
 - Отрисовка деталей строго внутри панели
 - Сохранение HTML ссылок в значениях индексов
+- Поддержка кликабельных PDF вложений
 """
 import re
 import streamlit as st
 from typing import List, Dict, Any
 from datetime import datetime
+import base64
 
 CLEAN_TAG_RE = re.compile(r"<(?!/?a\b)[^>]+>")  # Сохраняем только теги <a>
 LINK_SCRIPT_RE = re.compile(r"(?i)(javascript:)" )
+URL_PATTERN = re.compile(r'https?://[^\s<>"]+[^\s<>".!?)]')
 
 BG = "#fff"
 TITLE_COLOR = "#1a1a1a"  # Темнее для лучшей читаемости
@@ -38,6 +41,21 @@ def _clean_text(v: Any, strip_links: bool = False) -> str:
     return s.strip()
 
 
+def _convert_urls_to_links(text: str) -> str:
+    """Преобразование URL-ов в кликабельные ссылки"""
+    if not text:
+        return text
+        
+    def replace_url(match):
+        url = match.group(0)
+        # Проверяем, не находится ли URL уже внутри тега <a>
+        if '<a ' in text[:match.start()] and '</a>' in text[match.end():]:
+            return url  # Уже в ссылке
+        return f'<a href="{url}" target="_blank">{url}</a>'
+    
+    return URL_PATTERN.sub(replace_url, text)
+
+
 def _clean_doi(doi: str) -> str:
     if not doi:
         return ""
@@ -45,6 +63,15 @@ def _clean_doi(doi: str) -> str:
     for pref in ["https://doi.org/", "http://doi.org/", "doi.org/", "DOI:", "doi:"]:
         s = s.replace(pref, "")
     return s.strip()
+
+def _create_pdf_download_link(pdf_data: str, filename: str) -> str:
+    """Создание ссылки для скачивания PDF"""
+    try:
+        b64 = base64.b64encode(base64.b64decode(pdf_data)).decode()
+        href = f'data:application/pdf;base64,{b64}'
+        return f'<a href="{href}" download="{filename}" target="_blank" style="color:{PDF_COLOR};font-weight:700;text-decoration:none;margin-left:8px;">📄 PDF</a>'
+    except:
+        return f'<span style="color:{PDF_COLOR};font-weight:700;margin-left:8px;">📄 PDF</span>'
 
 class MainPanel:
     def render(self, publications: List[Dict[str, Any]], email_handler=None):
@@ -91,6 +118,13 @@ class MainPanel:
             font-size:0.96rem; 
             margin-left:8px; 
         }}
+        .gs-pdf a {{
+            color:{PDF_COLOR};
+            text-decoration:none;
+        }}
+        .gs-pdf a:hover {{
+            text-decoration:underline;
+        }}
         hr.gs-hr {{
             border:0;
             height:1px;
@@ -114,6 +148,10 @@ class MainPanel:
         .gs-index-val {{
             color:{INDEX_VAL_COLOR}; 
             font-size:0.98rem;
+        }}
+        .gs-index-val a {{
+            color:#1a0dab;
+            text-decoration:underline;
         }}
         .gs-arrow-btn {{
             background:#eef2f7;
@@ -154,6 +192,9 @@ class MainPanel:
             .gs-index-val {{
                 color: #e4e4e4 !important;
             }}
+            .gs-index-val a {{
+                color: #4fc3f7 !important;
+            }}
         }}
         </style>
         """, unsafe_allow_html=True)
@@ -177,6 +218,7 @@ class MainPanel:
             g = groups.setdefault(doi, {
                 "doi": doi,
                 "titles":[], "years":[], "journals":[], "authors":[], "pdfs":[],
+                "pdf_attachments": [],  # Добавляем PDF вложения
                 "emails": []
             })
             ti = _clean_text(p.get("title") or p.get("TI") or p.get("subject"), strip_links=True)
@@ -191,6 +233,12 @@ class MainPanel:
             g["authors"].extend(au)
             l1 = _clean_text(p.get("L1"), strip_links=True)
             if l1: g["pdfs"].append(l1)
+            
+            # Добавляем PDF вложения
+            pdf_attachments = p.get("pdf_attachments", [])
+            if pdf_attachments:
+                g["pdf_attachments"].extend(pdf_attachments)
+            
             g["emails"].append({
                 "date": p.get("date"),
                 "order": len(g["emails"]),
@@ -214,9 +262,11 @@ class MainPanel:
             if isinstance(raw, list):
                 for v in raw:
                     val = _clean_text(v, strip_links=False)  # Сохраняем ссылки
+                    val = _convert_urls_to_links(val)  # Преобразуем URL в ссылки
                     if val: pairs.append((tag, val))
             else:
                 val = _clean_text(raw, strip_links=False)  # Сохраняем ссылки
+                val = _convert_urls_to_links(val)  # Преобразуем URL в ссылки
                 if val: pairs.append((tag, val))
         return pairs
 
@@ -228,7 +278,10 @@ class MainPanel:
         authors_part = fa + (", ... , " + la if la and la!=fa else "")
         journal = data["journals"][-1] if data["journals"] else ""
         year = data["years"][-1] if data["years"] else ""
-        has_pdf = bool(data["pdfs"])
+        
+        # Проверяем наличие PDF вложений
+        pdf_attachments = data.get("pdf_attachments", [])
+        has_pdf = bool(pdf_attachments)
 
         # Контейнер для всей публикации
         st.markdown('<div class="gs-pub-item">', unsafe_allow_html=True)
@@ -240,7 +293,14 @@ class MainPanel:
         meta2 = []
         if year: meta2.append(f'<span class="gs-year">{year}</span>')
         meta2.append(f'<span class="gs-doi"><a href="https://doi.org/{doi}" target="_blank">{doi}</a></span>')
-        if has_pdf: meta2.append('<span class="gs-pdf">PDF</span>')
+        
+        # Отображаем кликабельную PDF иконку только если есть вложения
+        if has_pdf and pdf_attachments:
+            # Берем первое PDF вложение
+            first_pdf = pdf_attachments[0]
+            pdf_link = _create_pdf_download_link(first_pdf['data'], first_pdf['filename'])
+            meta2.append(pdf_link)
+        
         st.markdown('  ·  '.join(meta2), unsafe_allow_html=True)
 
         exp_key = f"exp_{doi}"
@@ -302,3 +362,15 @@ class MainPanel:
                 f'<span class="gs-index-val">{val}</span></div>', 
                 unsafe_allow_html=True
             )
+            
+        # Отображаем информацию о PDF вложениях если есть
+        pdf_attachments = data.get("pdf_attachments", [])
+        if pdf_attachments:
+            st.markdown('<div style="margin-top:12px;"><span class="gs-index-label">PDF вложения:</span></div>', unsafe_allow_html=True)
+            for pdf in pdf_attachments:
+                pdf_link = _create_pdf_download_link(pdf['data'], pdf['filename'])
+                size_mb = round(pdf['size'] / (1024*1024), 2)
+                st.markdown(
+                    f'<div style="margin-left:20px;"><span class="gs-index-val">{pdf["filename"]} ({size_mb} MB) {pdf_link}</span></div>',
+                    unsafe_allow_html=True
+                )
