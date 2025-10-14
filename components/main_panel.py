@@ -1,5 +1,8 @@
 """
-Основная панель: публикации — DOI отображается только как текст DOI, но кликабелен; стрелка меняется; детали печатаются как в письмах (с сохранением href)
+Основная панель: публикации в стиле Google Scholar по вашим условиям
+- Авторский блок: Первый Автор, ..., Последний Автор · Журнал
+- DOI: кликабельная ссылка https://doi.org/XXX
+- Детали: все письма по DOI, индексы идут по обратной дате, значения с сохранением href/скриптов, одинаковые склеены
 """
 import re
 import streamlit as st
@@ -7,7 +10,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 
 CLEAN_TAG_RE = re.compile(r"<[^>]+>")
-LINK_SCRIPT_RE = re.compile(r"(?i)(javascript:)" )
+LINK_SCRIPT_RE = re.compile(r"(?i)(javascript:)")
 
 BG = "#fff"
 TITLE_COLOR = "#174ea6"
@@ -38,7 +41,6 @@ def _clean_doi(doi: str) -> str:
     for pref in ["https://doi.org/", "http://doi.org/", "doi.org/", "DOI:", "doi:"]:
         s = s.replace(pref, "")
     return s.strip()
-
 
 class MainPanel:
     def render(self, publications: List[Dict[str, Any]], email_handler=None):
@@ -97,9 +99,8 @@ class MainPanel:
             g["emails"].append({
                 "date": p.get("date"),
                 "order": len(g["emails"]),
-                "raw": self._collect_raw_indices(p)  # без изменений, с href
+                "raw": self._collect_raw_indices(p)
             })
-        # уникализация 
         for g in groups.values():
             for k in ("titles", "years", "journals", "authors", "pdfs"):
                 seen=set(); uniq=[]
@@ -126,10 +127,10 @@ class MainPanel:
         title = (data["titles"][0] if data["titles"] else "Без названия")
         authors = data["authors"]
         fa = authors[0] if authors else ""; la = authors[-1] if len(authors)>1 else ""
-        authors_part = ", ... , ".join([fa, la]) if (fa and la and la!=fa) else fa
+        authors_part = fa + (", ... , " + la if la and la!=fa else "")
         journal = data["journals"][-1] if data["journals"] else ""
         year = data["years"][-1] if data["years"] else ""
-        has_pdf = bool(data["pdfs"]) 
+        has_pdf = bool(data["pdfs"])
 
         st.markdown('<div class="gs-pub-item">', unsafe_allow_html=True)
         st.markdown(f'<div class="gs-title">{title}</div>', unsafe_allow_html=True)
@@ -139,7 +140,7 @@ class MainPanel:
         doi_text = doi
         meta2 = []
         if year: meta2.append(f'<span class="gs-year">{year}</span>')
-        meta2.append(f'<span class="gs-doi"><a href="https://doi.org/{doi}" target="_blank">{doi_text}</a></span>')
+        meta2.append(f'<span class="gs-doi"><a href="https://doi.org/{doi}" target="_blank">https://doi.org/{doi_text}</a></span>')
         if has_pdf: meta2.append('<span class="gs-pdf">PDF</span>')
         st.markdown('  ·  '.join(meta2), unsafe_allow_html=True)
 
@@ -166,7 +167,6 @@ class MainPanel:
                 d = None
             return (d or datetime.min, -e.get("order", 0))
         emails_sorted = sorted(emails, key=_key, reverse=True)
-
         rows = []
         seen_values: dict[str, set[str]] = {}
         for e in emails_sorted:
@@ -176,11 +176,9 @@ class MainPanel:
                     rows.append((tag, val))
                 else:
                     seen_values[val].add(tag)
-        # печатаем слияние меток для дублей
         printed = set()
         for tag, val in rows:
             if val in printed: continue
             printed.add(val)
             tags_joined = ",".join(sorted(seen_values.get(val, {tag})))
-            # не изменяем val (сохраняем href/mailto и пр.)
-            st.markdown(f'<div><span class="gs-index-label">{tag} ({tags_joined}):</span> <span class="gs-index-val">{val}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div><span class="gs-index-label">{tags_joined}:</span> <span class="gs-index-val">{val}</span></div>', unsafe_allow_html=True)
