@@ -14,6 +14,7 @@ from config import EMAIL_CONFIG, DOI_PATTERN, REQUEST_PATTERNS, SCINET_CORE_EMAI
 import streamlit as st
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
+import base64
 
 class EmailHandler:
     """Класс для работы с электронной почтой"""
@@ -78,12 +79,33 @@ class EmailHandler:
         doi_matches = re.findall(DOI_PATTERN, text, re.IGNORECASE)
         return doi_matches[0] if doi_matches else None
 
+    def _get_pdf_attachments(self, msg) -> List[Dict[str, any]]:
+        """Извлечение PDF вложений из сообщения"""
+        pdf_attachments = []
+        
+        try:
+            for att in msg.attachments:
+                if att.content_type == 'application/pdf' or att.filename.lower().endswith('.pdf'):
+                    # Кодируем PDF в base64 для передачи через интерфейс
+                    pdf_data = base64.b64encode(att.payload).decode('utf-8')
+                    pdf_attachments.append({
+                        'filename': att.filename,
+                        'size': len(att.payload),
+                        'data': pdf_data,
+                        'content_type': att.content_type
+                    })
+        except Exception as e:
+            # Игнорируем ошибки обработки вложений
+            pass
+            
+        return pdf_attachments
+
     def get_emails_with_doi(self, folders: List[str] = None, 
                            date_from: datetime = None,
                            date_to: datetime = None) -> List[Dict]:
         """
         Получение всех писем содержащих DOI с фильтрацией
-        Улучшенная обработка RIS данных из тел писем
+        Улучшенная обработка RIS данных из тел писем и PDF вложений
         """
         if not self.connected:
             return []
@@ -124,6 +146,9 @@ class EmailHandler:
                             # Извлекаем RIS данные из текста письма
                             ris_data = self._extract_all_ris_from_text(email_text, email_html)
                             
+                            # Получаем PDF вложения
+                            pdf_attachments = self._get_pdf_attachments(msg)
+                            
                             email_data = {
                                 'uid': msg.uid,
                                 'folder': folder,
@@ -133,7 +158,8 @@ class EmailHandler:
                                 'date': msg.date,
                                 'doi': doi,
                                 'text': email_text,
-                                'html': email_html
+                                'html': email_html,
+                                'pdf_attachments': pdf_attachments  # Добавляем PDF вложения
                             }
                             
                             # Добавляем все найденные RIS данные
