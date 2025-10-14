@@ -54,18 +54,107 @@ class MainPanel:
         
         st.markdown(f"""
         <style>
-        .gs-pub-item {{ background:{BG}; padding:16px 12px 10px 12px; border-radius:8px; margin-bottom:12px; }}
-        .gs-title {{ font-size:1.08rem; font-weight:600; color:{TITLE_COLOR}; margin-bottom:2px; margin-top:2px; line-height:1.38; }}
-        .gs-authors  {{ color:{AUTHOR_COLOR}; font-size:0.95rem; margin-bottom:2px; }}
-        .gs-meta, .gs-year {{ color:{META_COLOR}; font-size:0.96rem; display:inline;}}
-        .gs-doi a {{ color:{DOI_COLOR}; font-family:ui-monospace,Menlo,monospace; font-size:0.97rem; text-decoration:underline; }}
-        .gs-pdf {{ color:{PDF_COLOR}; font-weight:700; font-size:0.96rem; margin-left:8px; }}
-        hr.gs-hr {{border:0;height:1px;background:{HR_COLOR};margin:8px 0 10px 0;}}
-        .gs-details {{background:{BOX_COLOR}; border:1px solid #e4e4e4; border-radius:8px;padding:13px 16px 12px 16px;margin-top:10px;}}
-        .gs-index-label {{color:{INDEX_LABEL_COLOR}; font-size:0.97rem; font-weight:600;margin-top:6px;}}
-        .gs-index-val {{color:{INDEX_VAL_COLOR}; font-size:0.98rem;}}
-        .gs-arrow-btn {{background:#eef2f7;border:1px solid #dbe2ea;border-radius:8px;color:#333;padding:2px 10px; min-width:40px; text-align:center;}}
-        .gs-arrow-btn:hover {{background:#e6ebf2}}
+        .gs-pub-item {{ 
+            background:{BG}; 
+            padding:16px 12px 10px 12px; 
+            border-radius:8px; 
+            margin-bottom:12px; 
+            border: 1px solid #e4e4e4;
+        }}
+        .gs-title {{ 
+            font-size:1.08rem; 
+            font-weight:600; 
+            color:{TITLE_COLOR}; 
+            margin-bottom:2px; 
+            margin-top:2px; 
+            line-height:1.38; 
+        }}
+        .gs-authors {{ 
+            color:{AUTHOR_COLOR}; 
+            font-size:0.95rem; 
+            margin-bottom:2px; 
+        }}
+        .gs-meta, .gs-year {{ 
+            color:{META_COLOR}; 
+            font-size:0.96rem; 
+            display:inline;
+        }}
+        .gs-doi a {{ 
+            color:{DOI_COLOR}; 
+            font-family:ui-monospace,Menlo,monospace; 
+            font-size:0.97rem; 
+            text-decoration:underline; 
+        }}
+        .gs-pdf {{ 
+            color:{PDF_COLOR}; 
+            font-weight:700; 
+            font-size:0.96rem; 
+            margin-left:8px; 
+        }}
+        hr.gs-hr {{
+            border:0;
+            height:1px;
+            background:{HR_COLOR};
+            margin:8px 0 10px 0;
+        }}
+        .gs-details {{
+            background:{BOX_COLOR}; 
+            border:1px solid #d0d7de; 
+            border-radius:8px;
+            padding:13px 16px 12px 16px;
+            margin-top:10px;
+            margin-bottom:8px;
+        }}
+        .gs-index-label {{
+            color:{INDEX_LABEL_COLOR}; 
+            font-size:0.97rem; 
+            font-weight:600;
+            margin-top:6px;
+        }}
+        .gs-index-val {{
+            color:{INDEX_VAL_COLOR}; 
+            font-size:0.98rem;
+        }}
+        .gs-arrow-btn {{
+            background:#eef2f7;
+            border:1px solid #dbe2ea;
+            border-radius:8px;
+            color:#333;
+            padding:2px 10px; 
+            min-width:40px; 
+            text-align:center;
+        }}
+        .gs-arrow-btn:hover {{
+            background:#e6ebf2
+        }}
+        
+        /* Улучшение контрастности для темной темы */
+        @media (prefers-color-scheme: dark) {{
+            .gs-pub-item {{
+                background: #1a1a1a;
+                border: 1px solid #404040;
+                color: #e4e4e4;
+            }}
+            .gs-title {{
+                color: #ffffff !important;
+            }}
+            .gs-authors {{
+                color: #cccccc !important;
+            }}
+            .gs-meta, .gs-year {{
+                color: #999999 !important;
+            }}
+            .gs-details {{
+                background: #2a2a2a;
+                border: 1px solid #505050;
+            }}
+            .gs-index-label {{
+                color: #aaaaaa !important;
+            }}
+            .gs-index-val {{
+                color: #e4e4e4 !important;
+            }}
+        }}
         </style>
         """, unsafe_allow_html=True)
 
@@ -141,7 +230,9 @@ class MainPanel:
         year = data["years"][-1] if data["years"] else ""
         has_pdf = bool(data["pdfs"])
 
+        # Контейнер для всей публикации
         st.markdown('<div class="gs-pub-item">', unsafe_allow_html=True)
+        
         st.markdown(f'<div class="gs-title">{title}</div>', unsafe_allow_html=True)
         line = authors_part + ("  ·  " + journal if journal else "")
         if line: st.markdown(f'<div class="gs-authors">{line}</div>', unsafe_allow_html=True)
@@ -154,18 +245,20 @@ class MainPanel:
 
         exp_key = f"exp_{doi}"
         is_open = st.session_state.get(exp_key, False)
-        arrow = "▲" if is_open else "▼"  # Исправлено: ▲ когда открыто, ▼ когда закрыто
+        # ИСПРАВЛЕНО: правильное направление стрелки
+        arrow = "▲" if is_open else "▼"  # ▼ когда закрыто (показать детали), ▲ когда открыто (скрыть детали)
         
         if st.button(arrow, key=f"btn_{doi}", help="Показать/скрыть детали публикации"):
             st.session_state[exp_key] = not is_open
             st.rerun()
             
-        # Отображение деталей ВНУТРИ блока публикации
+        # ИСПРАВЛЕНО: Отображение деталей ВНУТРИ блока публикации
         if st.session_state.get(exp_key, False):
             st.markdown('<div class="gs-details">', unsafe_allow_html=True)
             self._render_raw_details(data)
             st.markdown('</div>', unsafe_allow_html=True)
             
+        # Закрытие контейнера публикации
         st.markdown('</div>', unsafe_allow_html=True)
 
     def _render_raw_details(self, data: Dict[str, Any]):
