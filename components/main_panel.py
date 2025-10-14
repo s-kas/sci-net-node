@@ -1,9 +1,5 @@
 """
-Основная панель: доработка гиперссылок под формат из почты и замена разделителя на " - ".
-- Текст вида href="...">[label] рендерится как [[label]](compose-url)
-- Голые URL преобразуются в ссылки
-- DOI внутри строки форматируется как [10.xxxx](https://doi.org/...)
-- Разделитель индексов: " - " вместо ":"
+Основная панель: исправление синтаксиса регулярного выражения URL (экранирование кавычек) и стабильный импорт.
 """
 import re
 import streamlit as st
@@ -13,10 +9,11 @@ import base64
 import urllib.parse
 from html import escape
 
-A_TAG_RE = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE|re.DOTALL)
+A_TAG_RE = re.compile(r"<a\\b[^>]*>(.*?)</a>", re.IGNORECASE|re.DOTALL)
 HREF_SNIPPET_RE = re.compile(r"href=\"([^\"]+)\"[^>]*>(\[[^\]]+\]|[^<]+)", re.IGNORECASE)
-URL_PATTERN = re.compile(r"(https?://[^\s<>"]+[^\s<>")\]\.,;:!\?])")
-DOI_URL = re.compile(r"https?://doi\.org/(\S+)")
+# Исправлено: экранирование кавычек внутри raw-строки
+URL_PATTERN = re.compile(r"(https?://[^\\s<>\"]+[^\\s<>\"\)\]\.,;:!\?])")
+DOI_URL = re.compile(r"https?://doi\\.org/(\\S+)")
 
 BG = "#fff"; TITLE_COLOR = "#1a1a1a"; AUTHOR_COLOR = "#333"; META_COLOR = "#555"; DOI_COLOR = "#1a0dab"; PDF_COLOR = "#0b8043"; HR_COLOR = "#e4e4e4"; BOX_COLOR = "#f8fafc"; INDEX_LABEL_COLOR = "#5f6368"; INDEX_VAL_COLOR = "#2d2d2d"
 
@@ -30,34 +27,25 @@ def _preserve_links_and_escape(text: str) -> str:
         return ""
     s = str(text)
 
-    # 1) Преобразуем html-сниппеты href="...">label в целевую форму [[label]](compose)
     def to_markdown_link(m):
         href = m.group(1)
-        label = m.group(2).strip()
-        label = label if label else href
+        label = m.group(2).strip() or href
         final_href = _to_compose(href) if href.lower().startswith('mailto:') else href
         return f"[[{label.strip('[]')}]]({final_href})"
     s = HREF_SNIPPET_RE.sub(to_markdown_link, s)
 
-    # 2) Экранируем оставшийся HTML
     s = escape(s)
 
-    # 3) Возвращаем markdown-ссылки как есть (разэкранировать квадратные скобки и скобки)
     s = s.replace("[[", "@@MDLBR@@").replace("]]", "@@MDRBR@@").replace("%28", "(").replace("%29", ")")
 
-    # 4) Голые URL -> <a>
     def url_to_link(m):
         url = m.group(1)
         return f'<a href="{url}" target="_blank">{url}</a>'
     s = URL_PATTERN.sub(url_to_link, s)
 
-    # 5) Вернём markdown-подобную часть без экранирования
     s = s.replace("@@MDLBR@@", "[[").replace("@@MDRBR@@", "]]")
 
-    # 6) DOI украшение
-    m = DOI_URL.search(s)
-    if m:
-        doi_id = m.group(1)
+    if DOI_URL.search(s):
         s = DOI_URL.sub(lambda mm: f'[**{mm.group(1)}**](https://doi.org/{mm.group(1)})', s)
 
     return s
