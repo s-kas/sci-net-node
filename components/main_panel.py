@@ -1,5 +1,5 @@
 """
-Основная панель: публикации — DOI ссылка с текстом только DOI; стрелка вверх/вниз; детали внутри серого блока; HTML значений сохранён
+Основная панель: фикс — кнопка стрелки меняется и остаётся в одной строке; детали внутри серого блока; значения/ссылки как есть
 """
 import re
 import streamlit as st
@@ -56,7 +56,8 @@ class MainPanel:
         .gs-details {{background:{BOX_COLOR}; border:1px solid #e4e4e4; border-radius:8px;padding:13px 16px 12px 16px;}}
         .gs-index-label {{color:{INDEX_LABEL_COLOR}; font-size:0.97rem; font-weight:600;margin-top:6px;}}
         .gs-index-val {{color:{INDEX_VAL_COLOR}; font-size:0.98rem;}}
-        .gs-arrow-btn {{background:#eef2f7;border:1px solid #dbe2ea;border-radius:8px;color:#333;padding:2px 10px;}}
+        .gs-toggle-row {{display:flex; align-items:center; gap:10px;}}
+        .gs-arrow-btn {{background:#eef2f7;border:1px solid #dbe2ea;border-radius:8px;color:#333;padding:2px 10px; min-width:40px; text-align:center;}}
         .gs-arrow-btn:hover {{background:#e6ebf2}}
         </style>
         """, unsafe_allow_html=True)
@@ -136,14 +137,14 @@ class MainPanel:
 
         meta2 = []
         if year: meta2.append(f'<span class="gs-year">{year}</span>')
-        # Ссылка должна работать, но текстом показываем только сам DOI
         meta2.append(f'<span class="gs-doi"><a href="https://doi.org/{doi}" target="_blank">{doi}</a></span>')
         if has_pdf: meta2.append('<span class="gs-pdf">PDF</span>')
         st.markdown('  ·  '.join(meta2), unsafe_allow_html=True)
 
         exp_key = f"exp_{doi}"; is_open = st.session_state.get(exp_key, False)
         arrow = "▲" if is_open else "▼"
-        if st.button(arrow, key=f"btn_{doi}", help="Показать/скрыть индексы", type="secondary"):
+        arrow_label = f"{arrow}"
+        if st.button(arrow_label, key=f"btn_{doi}", help="Показать/скрыть индексы", type="secondary"):
             st.session_state[exp_key] = not is_open; is_open = not is_open
         if is_open:
             st.markdown('<div class="gs-details">', unsafe_allow_html=True)
@@ -177,5 +178,4 @@ class MainPanel:
             if val in printed: continue
             printed.add(val)
             tags_joined = ",".join(sorted(seen_values.get(val, {tag})))
-            # Печатаем строго для блока деталей (внутри серого), значения не модифицируем, html/ссылки сохраняются
             st.markdown(f'<div><span class="gs-index-label">{tags_joined}:</span> <span class="gs-index-val">{val}</span></div>', unsafe_allow_html=True)
