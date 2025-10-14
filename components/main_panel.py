@@ -1,8 +1,5 @@
 """
-Основная панель: публикации в стиле Google Scholar по вашим условиям
-- Авторский блок: Первый Автор, ..., Последний Автор · Журнал
-- DOI: кликабельная ссылка https://doi.org/XXX
-- Детали: все письма по DOI, индексы идут по обратной дате, значения с сохранением href/скриптов, одинаковые склеены
+Основная панель: публикации — DOI ссылка с текстом только DOI; стрелка вверх/вниз; детали внутри серого блока; HTML значений сохранён
 """
 import re
 import streamlit as st
@@ -10,7 +7,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 
 CLEAN_TAG_RE = re.compile(r"<[^>]+>")
-LINK_SCRIPT_RE = re.compile(r"(?i)(javascript:)")
+LINK_SCRIPT_RE = re.compile(r"(?i)(javascript:)" )
 
 BG = "#fff"
 TITLE_COLOR = "#174ea6"
@@ -56,11 +53,11 @@ class MainPanel:
         .gs-doi a {{ color:{DOI_COLOR}; font-family:ui-monospace,Menlo,monospace; font-size:0.97rem; text-decoration:underline; }}
         .gs-pdf {{ color:{PDF_COLOR}; font-weight:700; font-size:0.96rem; margin-left:8px; }}
         hr.gs-hr {{border:0;height:1px;background:{HR_COLOR};margin:8px 0 10px 0;}}
-        .gs-details {{background:{BOX_COLOR}; border:1px solid #e4e4e4; border-radius:8px;padding:13px 16px 9px 16px;}}
+        .gs-details {{background:{BOX_COLOR}; border:1px solid #e4e4e4; border-radius:8px;padding:13px 16px 12px 16px;}}
         .gs-index-label {{color:{INDEX_LABEL_COLOR}; font-size:0.97rem; font-weight:600;margin-top:6px;}}
         .gs-index-val {{color:{INDEX_VAL_COLOR}; font-size:0.98rem;}}
-        .gs-toggle {{display:inline-flex;align-items:center;gap:6px;}}
-        .gs-arrow {{font-size:1.05rem;color:#555;}}
+        .gs-arrow-btn {{background:#eef2f7;border:1px solid #dbe2ea;border-radius:8px;color:#333;padding:2px 10px;}}
+        .gs-arrow-btn:hover {{background:#e6ebf2}}
         </style>
         """, unsafe_allow_html=True)
 
@@ -137,17 +134,16 @@ class MainPanel:
         line = authors_part + ("  ·  " + journal if journal else "")
         if line: st.markdown(f'<div class="gs-authors">{line}</div>', unsafe_allow_html=True)
 
-        doi_text = doi
         meta2 = []
         if year: meta2.append(f'<span class="gs-year">{year}</span>')
-        meta2.append(f'<span class="gs-doi"><a href="https://doi.org/{doi}" target="_blank">https://doi.org/{doi_text}</a></span>')
+        # Ссылка должна работать, но текстом показываем только сам DOI
+        meta2.append(f'<span class="gs-doi"><a href="https://doi.org/{doi}" target="_blank">{doi}</a></span>')
         if has_pdf: meta2.append('<span class="gs-pdf">PDF</span>')
         st.markdown('  ·  '.join(meta2), unsafe_allow_html=True)
 
         exp_key = f"exp_{doi}"; is_open = st.session_state.get(exp_key, False)
         arrow = "▲" if is_open else "▼"
-        label = f'<span class="gs-arrow">{arrow}</span>'
-        if st.button(label, key=f"btn_{doi}"):
+        if st.button(arrow, key=f"btn_{doi}", help="Показать/скрыть индексы", type="secondary"):
             st.session_state[exp_key] = not is_open; is_open = not is_open
         if is_open:
             st.markdown('<div class="gs-details">', unsafe_allow_html=True)
@@ -181,4 +177,5 @@ class MainPanel:
             if val in printed: continue
             printed.add(val)
             tags_joined = ",".join(sorted(seen_values.get(val, {tag})))
+            # Печатаем строго для блока деталей (внутри серого), значения не модифицируем, html/ссылки сохраняются
             st.markdown(f'<div><span class="gs-index-label">{tags_joined}:</span> <span class="gs-index-val">{val}</span></div>', unsafe_allow_html=True)
