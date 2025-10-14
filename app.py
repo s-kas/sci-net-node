@@ -218,7 +218,7 @@ def main():
 
 
 def load_emails(email_handler, ris_parser, filters):
-    """Загрузка писем с DOI"""
+    """Загрузка писем с DOI и PDF вложениями"""
     from datetime import datetime as _dt
 
     try:
@@ -242,33 +242,48 @@ def load_emails(email_handler, ris_parser, filters):
             for i, email in enumerate(emails):
                 progress_bar.progress((i + 1) / len(emails))
 
+                # Обработка RIS данных из текста письма
                 ris_data = ris_parser.parse_ris_from_text(email.get("text", ""))
                 pub_info = ris_parser.extract_publication_info(ris_data)
 
-                pub_info.update(
-                    {
-                        "folder": email.get("folder", ""),
-                        "from": email.get("from", ""),
-                        "subject": email.get("subject", ""),
-                        "date": email.get("date", ""),
-                        "uid": email.get("uid", ""),
-                        "text": email.get("text", ""),
-                        "html": email.get("html", ""),
-                        "DO": email.get("doi"),
-                    }
-                )
+                # Обновляем информацию о публикации
+                pub_info.update({
+                    "folder": email.get("folder", ""),
+                    "from": email.get("from", ""),
+                    "subject": email.get("subject", ""),
+                    "date": email.get("date", ""),
+                    "uid": email.get("uid", ""),
+                    "text": email.get("text", ""),
+                    "html": email.get("html", ""),
+                    "DO": email.get("doi"),
+                    "pdf_attachments": email.get("pdf_attachments", [])  # Добавляем PDF вложения
+                })
 
+                # Добавляем все RIS данные напрямую из email
+                for key, value in email.items():
+                    if key.upper() in ['DO', 'TI', 'AU', 'PY', 'T2', 'VL', 'IS', 'SP', 'EP', 'KW', 'DE', 'AB', 'N2', 'UR', 'L1', 'L2', 'M3', 'TY']:
+                        if key.upper() not in pub_info or not pub_info[key.upper()]:
+                            pub_info[key.upper()] = value
+
+                # Дополняем информацию из темы письма и DOI
                 if not pub_info.get("title") and email.get("subject"):
                     pub_info["title"] = email["subject"]
+                    pub_info["TI"] = email["subject"]
 
                 if not pub_info.get("doi") and email.get("doi"):
                     pub_info["doi"] = email["doi"]
+                    pub_info["DO"] = email["doi"]
 
                 publications.append(pub_info)
 
             st.session_state.publications = publications
             progress_bar.empty()
-            st.success(f"✅ Загружено {len(publications)} писем с DOI")
+            
+            # Подсчитываем PDF вложения
+            total_pdfs = sum(len(pub.get("pdf_attachments", [])) for pub in publications)
+            pdf_info = f" (📄 {total_pdfs} PDF)" if total_pdfs > 0 else ""
+            
+            st.success(f"✅ Загружено {len(publications)} писем с DOI{pdf_info}")
 
     except Exception as e:
         st.error(f"❌ Ошибка загрузки писем: {e}")
