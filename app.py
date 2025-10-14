@@ -24,12 +24,32 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Глобальные стили: белый фон и центрирование контейнера
+# Глобальные стили: белый фон, центрирование контейнера и улучшенная читаемость заголовков
 st.markdown(
     """
     <style>
       .stApp {background:#ffffff !important;}
       .block-container {max-width: 1200px; margin: 0 auto;}
+      .main h1, .main h2, .main h3, .main h4, .main h5, .main h6 {
+        color: #1a1a1a !important;
+        font-weight: 600 !important;
+      }
+      .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+        color: #1a1a1a !important;
+        font-weight: 600 !important;
+      }
+      /* Улучшение контраста для всех заголовков */
+      div[data-testid="stMarkdownContainer"] h1,
+      div[data-testid="stMarkdownContainer"] h2,
+      div[data-testid="stMarkdownContainer"] h3,
+      div[data-testid="stMarkdownContainer"] h4 {
+        color: #1a1a1a !important;
+        font-weight: 600 !important;
+      }
+      /* Общие стили для лучшей читаемости */
+      .stApp p, .stApp span, .stApp div {
+        color: #333 !important;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -190,7 +210,10 @@ def show_welcome_screen():
     with col2:
         st.markdown(
             """
-            <div style=\"text-align:center; padding: 50px;\">\n              <h2>🔬 Добро пожаловать в Sci.Net.Node!</h2>\n              <p style=\"font-size: 18px;\">Система управления научными публикациями через электронную почту</p>\n            </div>
+            <div style="text-align:center; padding: 50px;">
+              <h2>🔬 Добро пожаловать в Sci.Net.Node!</h2>
+              <p style="font-size: 18px;">Система управления научными публикациями через электронную почту</p>
+            </div>
             """,
             unsafe_allow_html=True,
         )
