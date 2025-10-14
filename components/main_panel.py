@@ -1,5 +1,5 @@
 """
-Основная панель: публикации с правками — формат авторов, DOI как ссылка, детальная панель с упорядочиванием и объединением значений
+Основная панель: публикации — DOI отображается только как текст DOI, но кликабелен; стрелка меняется; детали печатаются как в письмах (с сохранением href)
 """
 import re
 import streamlit as st
@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 
 CLEAN_TAG_RE = re.compile(r"<[^>]+>")
-LINK_SCRIPT_RE = re.compile(r"(?i)(javascript:)")  # допускаем href/mailto в деталях
+LINK_SCRIPT_RE = re.compile(r"(?i)(javascript:)" )
 
 BG = "#fff"
 TITLE_COLOR = "#174ea6"
@@ -28,8 +28,7 @@ def _clean_text(v: Any, strip_links: bool = True) -> str:
     s = CLEAN_TAG_RE.sub(" ", s)
     if strip_links:
         s = LINK_SCRIPT_RE.sub("", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return s.strip()
 
 
 def _clean_doi(doi: str) -> str:
@@ -58,6 +57,8 @@ class MainPanel:
         .gs-details {{background:{BOX_COLOR}; border:1px solid #e4e4e4; border-radius:8px;padding:13px 16px 9px 16px;}}
         .gs-index-label {{color:{INDEX_LABEL_COLOR}; font-size:0.97rem; font-weight:600;margin-top:6px;}}
         .gs-index-val {{color:{INDEX_VAL_COLOR}; font-size:0.98rem;}}
+        .gs-toggle {{display:inline-flex;align-items:center;gap:6px;}}
+        .gs-arrow {{font-size:1.05rem;color:#555;}}
         </style>
         """, unsafe_allow_html=True)
 
@@ -79,75 +80,52 @@ class MainPanel:
             g = groups.setdefault(doi, {
                 "doi": doi,
                 "titles":[], "years":[], "journals":[], "authors":[], "pdfs":[],
-                "all_indices": {},
                 "emails": []
             })
-            self._collect_indices(g["all_indices"], p)
             ti = _clean_text(p.get("title") or p.get("TI") or p.get("subject"))
-            if ti:
-                g["titles"].append(ti)
+            if ti: g["titles"].append(ti)
             jr = _clean_text(p.get("journal") or p.get("T2"))
-            if jr:
-                g["journals"].append(jr)
+            if jr: g["journals"].append(jr)
             py = _clean_text(p.get("year") or p.get("PY"))
-            if py:
-                g["years"].append(py)
+            if py: g["years"].append(py)
             au = p.get("AU") or p.get("authors") or []
-            if isinstance(au, str):
-                au = [au]
+            if isinstance(au, str): au = [au]
             au = [_clean_text(a) for a in au if _clean_text(a)]
             g["authors"].extend(au)
             l1 = _clean_text(p.get("L1"))
-            if l1:
-                g["pdfs"].append(l1)
+            if l1: g["pdfs"].append(l1)
             g["emails"].append({
                 "date": p.get("date"),
                 "order": len(g["emails"]),
-                "indices": self._collect_indices_ordered(p)
+                "raw": self._collect_raw_indices(p)  # без изменений, с href
             })
-        # уникализация
+        # уникализация 
         for g in groups.values():
             for k in ("titles", "years", "journals", "authors", "pdfs"):
-                seen = set(); uniq = []
+                seen=set(); uniq=[]
                 for v in g[k]:
-                    if v not in seen:
-                        uniq.append(v); seen.add(v)
-                g[k] = uniq
+                    if v not in seen: uniq.append(v); seen.add(v)
+                g[k]=uniq
         return groups
 
-    def _collect_indices(self, acc: Dict[str, Any], p: Dict[str, Any]):
-        for tag in ["DO","TI","M3","TY","PY","T2","VL","IS","SP","EP","AU","KW","DE","AB","N2","UR","L1","L2"]:
-            val = p.get(tag) or p.get(tag.lower())
-            if val is None:
-                continue
-            if isinstance(val, list):
-                cleaned = [_clean_text(v) for v in val if _clean_text(v)]
-            else:
-                cleaned = [_clean_text(val)] if _clean_text(val) else []
-            if not cleaned:
-                continue
-            acc.setdefault(tag, []).extend(cleaned)
-
-    def _collect_indices_ordered(self, p: Dict[str, Any]) -> Dict[str, list]:
-        # Возвращает индексы ровно в том порядке, как в письме (по ключам), без удаления ссылок (сохраняем href/mailto)
-        ordered: Dict[str, list] = {}
+    def _collect_raw_indices(self, p: Dict[str, Any]) -> list[tuple[str,str]]:
+        pairs = []
         for tag in ["DO","TI","M3","TY","PY","T2","VL","IS","SP","EP","AU","KW","DE","AB","N2","UR","L1","L2"]:
             raw = p.get(tag) or p.get(tag.lower())
-            if raw is None: 
-                continue
+            if raw is None: continue
             if isinstance(raw, list):
-                cleaned = [_clean_text(v, strip_links=False) for v in raw if _clean_text(v, strip_links=False)]
+                for v in raw:
+                    val = _clean_text(v, strip_links=False)
+                    if val: pairs.append((tag, val))
             else:
-                cleaned = [_clean_text(raw, strip_links=False)] if _clean_text(raw, strip_links=False) else []
-            if cleaned:
-                ordered[tag] = cleaned
-        return ordered
+                val = _clean_text(raw, strip_links=False)
+                if val: pairs.append((tag, val))
+        return pairs
 
     def _render_publication_row(self, doi: str, data: Dict[str, Any]):
         title = (data["titles"][0] if data["titles"] else "Без названия")
         authors = data["authors"]
         fa = authors[0] if authors else ""; la = authors[-1] if len(authors)>1 else ""
-        # формат: Первый Автор, ..., Последний Автор  ·  Журнал
         authors_part = ", ... , ".join([fa, la]) if (fa and la and la!=fa) else fa
         journal = data["journals"][-1] if data["journals"] else ""
         year = data["years"][-1] if data["years"] else ""
@@ -155,33 +133,28 @@ class MainPanel:
 
         st.markdown('<div class="gs-pub-item">', unsafe_allow_html=True)
         st.markdown(f'<div class="gs-title">{title}</div>', unsafe_allow_html=True)
+        line = authors_part + ("  ·  " + journal if journal else "")
+        if line: st.markdown(f'<div class="gs-authors">{line}</div>', unsafe_allow_html=True)
 
-        left = authors_part
-        right = journal
-        line = left + ("  ·  " + right if right else "")
-        if line:
-            st.markdown(f'<div class="gs-authors">{line}</div>', unsafe_allow_html=True)
-
+        doi_text = doi
         meta2 = []
-        if year:
-            meta2.append(f'<span class="gs-year">{year}</span>')
-        meta2.append(f'<span class="gs-doi"><a href="https://doi.org/{doi}" target="_blank">https://doi.org/{doi}</a></span>')
-        if has_pdf:
-            meta2.append('<span class="gs-pdf">PDF</span>')
+        if year: meta2.append(f'<span class="gs-year">{year}</span>')
+        meta2.append(f'<span class="gs-doi"><a href="https://doi.org/{doi}" target="_blank">{doi_text}</a></span>')
+        if has_pdf: meta2.append('<span class="gs-pdf">PDF</span>')
         st.markdown('  ·  '.join(meta2), unsafe_allow_html=True)
 
         exp_key = f"exp_{doi}"; is_open = st.session_state.get(exp_key, False)
         arrow = "▲" if is_open else "▼"
-        if st.button(arrow, key=f"btn_{doi}", help="Показать/скрыть индексы", type="secondary"):
+        label = f'<span class="gs-arrow">{arrow}</span>'
+        if st.button(label, key=f"btn_{doi}"):
             st.session_state[exp_key] = not is_open; is_open = not is_open
         if is_open:
             st.markdown('<div class="gs-details">', unsafe_allow_html=True)
-            self._render_indices_table_merged_ordered(data)
+            self._render_raw_details(data)
             st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    def _render_indices_table_merged_ordered(self, data: Dict[str, Any]):
-        # Слияние значений с одинаковым текстом в одну строку; сортировка писем по дате (desc), затем по порядку появления
+    def _render_raw_details(self, data: Dict[str, Any]):
         emails = data.get("emails", [])
         def _key(e):
             d = e.get("date")
@@ -194,41 +167,20 @@ class MainPanel:
             return (d or datetime.min, -e.get("order", 0))
         emails_sorted = sorted(emails, key=_key, reverse=True)
 
-        # накапливаем пары (TAG, VALUE) в порядке писем и их тел
-        pairs: list[tuple[str,str]] = []
+        rows = []
+        seen_values: dict[str, set[str]] = {}
         for e in emails_sorted:
-            indices = e.get("indices", {})
-            for tag in ["DO","TI","M3","TY","PY","T2","VL","IS","SP","EP","AU","KW","DE","AB","N2","UR","L1","L2"]:
-                vals = indices.get(tag, [])
-                for v in vals:
-                    pairs.append((tag, v))
-
-        if not pairs:
-            st.markdown("_Для этой публикации не найдено детальных индексов._")
-            return
-
-        # Объединяем одинаковые значения в одну строку (независимо от тега), но сохраняем первый встретившийся тег как метку
-        seen: Dict[str, list[str]] = {}
-        tag_label: Dict[str, str] = {}
-        for tag, val in pairs:
-            key = val.strip()
-            if key not in seen:
-                seen[key] = [tag]
-                tag_label[key] = tag
-            else:
-                if tag not in seen[key]:
-                    seen[key].append(tag)
-
-        # Выводим построчно в накопленном порядке
-        for tag, val in pairs:
-            key = val.strip()
-            if key not in tag_label:
-                continue
-            label = tag_label.pop(key)  # печатаем только один раз
-            tags_joined = ",".join(seen[key])
-            # если значение похоже на ссылку, оставляем как есть (href/mailto сохранялись ранее)
-            if re.search(r"https?://|mailto:", val, flags=re.I):
-                value_html = val
-            else:
-                value_html = _clean_text(val, strip_links=False)
-            st.markdown(f'<div><span class="gs-index-label">{label} ({tags_joined}):</span> <span class="gs-index-val">{value_html}</span></div>', unsafe_allow_html=True)
+            for tag, val in e.get("raw", []):
+                if val not in seen_values:
+                    seen_values[val] = {tag}
+                    rows.append((tag, val))
+                else:
+                    seen_values[val].add(tag)
+        # печатаем слияние меток для дублей
+        printed = set()
+        for tag, val in rows:
+            if val in printed: continue
+            printed.add(val)
+            tags_joined = ",".join(sorted(seen_values.get(val, {tag})))
+            # не изменяем val (сохраняем href/mailto и пр.)
+            st.markdown(f'<div><span class="gs-index-label">{tag} ({tags_joined}):</span> <span class="gs-index-val">{val}</span></div>', unsafe_allow_html=True)
