@@ -10,7 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from imap_tools import MailBox, AND, OR
 from bs4 import BeautifulSoup
-from config import EMAIL_CONFIG, DOI_PATTERN, REQUEST_PATTERNS, SCINET_CORE_EMAIL
+from config import EMAIL_CONFIG, DOI_PATTERN, REQUEST_PATTERNS, SCINET_CORE_EMAIL, RIS_TAGS
 import streamlit as st
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
@@ -83,6 +83,7 @@ class EmailHandler:
                            date_to: datetime = None) -> List[Dict]:
         """
         Получение всех писем содержащих DOI с фильтрацией
+        Улучшенная обработка RIS данных из тел писем
         """
         if not self.connected:
             return []
@@ -110,14 +111,19 @@ class EmailHandler:
                     try:
                         # Получаем текст письма
                         email_text = msg.text or ""
-                        if not email_text and msg.html:
-                            soup = BeautifulSoup(msg.html, 'html.parser')
+                        email_html = msg.html or ""
+                        
+                        if not email_text and email_html:
+                            soup = BeautifulSoup(email_html, 'html.parser')
                             email_text = soup.get_text()
 
                         # Ищем DOI
                         doi = self.extract_doi_from_text(email_text)
 
                         if doi:
+                            # Извлекаем RIS данные из текста письма
+                            ris_data = self._extract_all_ris_from_text(email_text, email_html)
+                            
                             email_data = {
                                 'uid': msg.uid,
                                 'folder': folder,
@@ -127,8 +133,11 @@ class EmailHandler:
                                 'date': msg.date,
                                 'doi': doi,
                                 'text': email_text,
-                                'html': msg.html
+                                'html': email_html
                             }
+                            
+                            # Добавляем все найденные RIS данные
+                            email_data.update(ris_data)
                             emails_data.append(email_data)
 
                     except Exception as msg_error:
@@ -140,33 +149,77 @@ class EmailHandler:
 
         return emails_data
 
-    def parse_ris_data_from_email(self, email_text: str) -> Dict[str, str]:
+    def _extract_all_ris_from_text(self, text: str, html: str = "") -> Dict[str, any]:
         """
-        Извлечение RIS данных из текста письма
+        Извлечение всех RIS данных из текста и HTML письма
+        Сохраняем HTML-ссылки в значениях
         """
         ris_data = {}
-
-        if not email_text:
+        
+        if not text and not html:
             return ris_data
 
-        # Паттерн для RIS полей
+        # Паттерн для RIS полей: TAG - VALUE или TAG  - VALUE
         ris_pattern = r'^([A-Z0-9]{2})\s*-\s*(.+)$'
+        
+        # Обрабатываем оба текста (текст и HTML)
+        texts_to_process = [text]
+        if html and html != text:
+            texts_to_process.append(html)
 
-        lines = email_text.split('\n')
-        for line in lines:
-            line = line.strip()
-            match = re.match(ris_pattern, line)
-            if match:
-                tag, value = match.groups()
-                # Для множественных значений создаем списки
-                if tag in ['AU', 'KW', 'DE']:
-                    if tag not in ris_data:
-                        ris_data[tag] = []
-                    ris_data[tag].append(value.strip())
+        for source_text in texts_to_process:
+            lines = source_text.split('\n')
+            current_tag = None
+            current_value = ""
+
+            for line in lines:
+                line = line.strip()
+                
+                # Проверяем начало нового RIS поля
+                match = re.match(ris_pattern, line)
+                if match:
+                    # Сохраняем предыдущее поле если есть
+                    if current_tag:
+                        self._add_ris_field_enhanced(ris_data, current_tag, current_value)
+
+                    current_tag, current_value = match.groups()
+                    current_value = current_value.strip()
                 else:
-                    ris_data[tag] = value.strip()
+                    # Продолжение многострочного поля
+                    if current_tag and line:
+                        current_value += " " + line
+
+            # Сохраняем последнее поле
+            if current_tag:
+                self._add_ris_field_enhanced(ris_data, current_tag, current_value)
 
         return ris_data
+
+    def _add_ris_field_enhanced(self, ris_data: Dict, tag: str, value: str):
+        """Добавление RIS поля в структуру данных с сохранением HTML"""
+        value = value.strip()
+        if not value:
+            return
+
+        # Поля которые могут повторяться
+        multi_fields = ['AU', 'KW', 'DE', 'CR', 'A1', 'A2', 'A3']
+
+        if tag in multi_fields:
+            if tag not in ris_data:
+                ris_data[tag] = []
+            # Не добавляем дубликаты
+            if value not in ris_data[tag]:
+                ris_data[tag].append(value)
+        else:
+            # Для одиночных полей берем последнее значение
+            if tag not in ris_data or len(value) > len(str(ris_data.get(tag, ''))):
+                ris_data[tag] = value
+
+    def parse_ris_data_from_email(self, email_text: str) -> Dict[str, str]:
+        """
+        Извлечение RIS данных из текста письма (устаревший метод)
+        """
+        return self._extract_all_ris_from_text(email_text)
 
     def create_request_email_link(self, to_email: str, subject: str, body: str) -> str:
         """Создание mailto ссылки для запроса"""
