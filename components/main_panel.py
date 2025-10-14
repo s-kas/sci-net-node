@@ -1,5 +1,8 @@
 """
 Основная панель: улучшение отображения гиперссылок и добавление индексов CR/CITA.
+- Скрытие HTML-скриптов, экранирование всего HTML, сохранение только реальных <a>
+- Преобразование голых URL в кликабельные ссылки, как в письме
+- Отображение кликабельной PDF-иконки только при наличии вложений
 """
 import re
 import streamlit as st
@@ -26,7 +29,9 @@ INDEX_VAL_COLOR = "#2d2d2d"
 
 
 def _preserve_links_and_escape(text: str) -> str:
-    """Экранирует HTML, но сохраняет реальные <a> ссылки как есть. Также превращает голые URL в ссылки."""
+    """Экранирует HTML (включая скрипты/стили), но сохраняет реальные <a> ссылки как есть.
+    Также превращает голые URL в ссылки.
+    """
     if text is None:
         return ""
     s = str(text)
@@ -38,7 +43,7 @@ def _preserve_links_and_escape(text: str) -> str:
         return f"@@A{len(placeholders)-1}@@"
     s_tmp = A_TAG_RE.sub(keep_anchor, s)
 
-    # 2) Экранируем остальной HTML
+    # 2) Экранируем остальной HTML (скрываем «html-скрипты» и пр.)
     s_tmp = escape(s_tmp)
 
     # 3) Преобразуем голые URL в ссылки
@@ -47,7 +52,7 @@ def _preserve_links_and_escape(text: str) -> str:
         return f'<a href="{url}" target="_blank">{url}</a>'
     s_tmp = URL_PATTERN.sub(url_to_link, s_tmp)
 
-    # 4) Возвращаем сохранённые <a> теги на их места (они остались как оригинал из письма)
+    # 4) Возвращаем сохранённые <a> теги на их места (как в письме)
     for i, ahtml in enumerate(placeholders):
         s_tmp = s_tmp.replace(f"@@A{i}@@", ahtml)
 
@@ -139,7 +144,6 @@ class MainPanel:
 
     def _collect_raw_indices(self, p: Dict[str, Any]) -> List[tuple[str,str]]:
         pairs = []
-        # Добавлены CR и CITA
         for tag in ["DO","TI","M3","TY","PY","T2","VL","IS","SP","EP","AU","KW","DE","AB","N2","UR","L1","L2","CR","CITA"]:
             raw = p.get(tag) or p.get(tag.lower())
             if raw is None:
@@ -212,7 +216,7 @@ class MainPanel:
                     seen_values[val].add(tag)
         printed = set()
         for tag, val in rows:
-            if val in printed: 
+            if val in printed:
                 continue
             printed.add(val)
             tags_joined = ",".join(sorted(seen_values.get(val, {tag})))
