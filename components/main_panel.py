@@ -1,5 +1,8 @@
 """
-Основная панель: фикс — кнопка стрелки меняется и остаётся в одной строке; детали внутри серого блока; значения/ссылки как есть
+Основная панель: исправление логики кнопки и отображения индексов внутри серого блока.
+- Надёжное переключение стрелки по состоянию exp_key
+- Отрисовка деталей строго внутри панели
+- Сохранение HTML ссылок в значениях индексов
 """
 import re
 import streamlit as st
@@ -56,7 +59,6 @@ class MainPanel:
         .gs-details {{background:{BOX_COLOR}; border:1px solid #e4e4e4; border-radius:8px;padding:13px 16px 12px 16px;}}
         .gs-index-label {{color:{INDEX_LABEL_COLOR}; font-size:0.97rem; font-weight:600;margin-top:6px;}}
         .gs-index-val {{color:{INDEX_VAL_COLOR}; font-size:0.98rem;}}
-        .gs-toggle-row {{display:flex; align-items:center; gap:10px;}}
         .gs-arrow-btn {{background:#eef2f7;border:1px solid #dbe2ea;border-radius:8px;color:#333;padding:2px 10px; min-width:40px; text-align:center;}}
         .gs-arrow-btn:hover {{background:#e6ebf2}}
         </style>
@@ -141,11 +143,12 @@ class MainPanel:
         if has_pdf: meta2.append('<span class="gs-pdf">PDF</span>')
         st.markdown('  ·  '.join(meta2), unsafe_allow_html=True)
 
-        exp_key = f"exp_{doi}"; is_open = st.session_state.get(exp_key, False)
+        exp_key = f"exp_{doi}"
+        is_open = st.session_state.get(exp_key, False)
         arrow = "▲" if is_open else "▼"
-        arrow_label = f"{arrow}"
-        if st.button(arrow_label, key=f"btn_{doi}", help="Показать/скрыть индексы", type="secondary"):
-            st.session_state[exp_key] = not is_open; is_open = not is_open
+        if st.button(arrow, key=f"btn_{doi}"):
+            st.session_state[exp_key] = not is_open
+            is_open = st.session_state[exp_key]
         if is_open:
             st.markdown('<div class="gs-details">', unsafe_allow_html=True)
             self._render_raw_details(data)
