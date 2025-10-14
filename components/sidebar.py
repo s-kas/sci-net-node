@@ -15,6 +15,68 @@ class SidebarPanel:
 
     def __init__(self, publications: List[Dict[str, Any]]):
         self.publications = publications
+        
+        # Добавляем стили для боковой панели
+        st.markdown("""
+        <style>
+        /* Стили боковой панели */
+        .css-1d391kg {
+            background-color: #f8f9fa !important;
+        }
+        
+        /* Улучшение читаемости заголовков боковой панели */
+        .css-1d391kg h2, .css-1d391kg h3 {
+            color: #1a1a1a !important;
+            font-weight: 600 !important;
+        }
+        
+        /* Улучшение читаемости меток */
+        .css-1d391kg label {
+            color: #333 !important;
+            font-weight: 500 !important;
+        }
+        
+        /* Стили кнопок в боковой панели */
+        .css-1d391kg .stButton > button {
+            width: 100%;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            margin: 2px 0;
+        }
+        .css-1d391kg .stButton > button:hover {
+            background-color: #0056b3;
+        }
+        
+        /* Стили для статистики */
+        .css-1d391kg .metric-container {
+            background-color: #ffffff;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 5px 0;
+            border: 1px solid #dee2e6;
+        }
+        
+        /* Стили для темной темы */
+        @media (prefers-color-scheme: dark) {
+            .css-1d391kg {
+                background-color: #2a2a2a !important;
+            }
+            .css-1d391kg h2, .css-1d391kg h3 {
+                color: #ffffff !important;
+            }
+            .css-1d391kg label {
+                color: #e4e4e4 !important;
+            }
+            .css-1d391kg .metric-container {
+                background-color: #3a3a3a;
+                border: 1px solid #555;
+            }
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
     def render_connection_section(self) -> Dict[str, str]:
         """Секция подключения к почте"""
