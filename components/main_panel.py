@@ -1,5 +1,5 @@
 """
-Основная панель: исправление синтаксиса регулярного выражения URL (экранирование кавычек) и стабильный импорт.
+Основная панель: конвертация только html-сниппетов href="…">Label в кликабельные ссылки в деталях. Убраны прочие манипуляции.
 """
 import re
 import streamlit as st
@@ -9,46 +9,24 @@ import base64
 import urllib.parse
 from html import escape
 
-A_TAG_RE = re.compile(r"<a\\b[^>]*>(.*?)</a>", re.IGNORECASE|re.DOTALL)
-HREF_SNIPPET_RE = re.compile(r"href=\"([^\"]+)\"[^>]*>(\[[^\]]+\]|[^<]+)", re.IGNORECASE)
-# Исправлено: экранирование кавычек внутри raw-строки
-URL_PATTERN = re.compile(r"(https?://[^\\s<>\"]+[^\\s<>\"\)\]\.,;:!\?])")
-DOI_URL = re.compile(r"https?://doi\\.org/(\\S+)")
+HREF_SNIPPET_RE = re.compile(r"href=\"([^\"]+)\"[^>]*>([^<]+)", re.IGNORECASE)
 
 BG = "#fff"; TITLE_COLOR = "#1a1a1a"; AUTHOR_COLOR = "#333"; META_COLOR = "#555"; DOI_COLOR = "#1a0dab"; PDF_COLOR = "#0b8043"; HR_COLOR = "#e4e4e4"; BOX_COLOR = "#f8fafc"; INDEX_LABEL_COLOR = "#5f6368"; INDEX_VAL_COLOR = "#2d2d2d"
 
 
 def _to_compose(url: str) -> str:
-    return f"https://e.mail.ru/compose/?mailto={urllib.parse.quote(url, safe='')}"
+    return f"https://e.mail.ru/compose/?mailto={urllib.parse.quote(url, safe='')}" if url.lower().startswith('mailto:') else url
 
 
-def _preserve_links_and_escape(text: str) -> str:
+def _href_snippet_to_anchor(text: str) -> str:
     if text is None:
         return ""
     s = str(text)
-
-    def to_markdown_link(m):
-        href = m.group(1)
+    def repl(m):
+        href = _to_compose(m.group(1))
         label = m.group(2).strip() or href
-        final_href = _to_compose(href) if href.lower().startswith('mailto:') else href
-        return f"[[{label.strip('[]')}]]({final_href})"
-    s = HREF_SNIPPET_RE.sub(to_markdown_link, s)
-
-    s = escape(s)
-
-    s = s.replace("[[", "@@MDLBR@@").replace("]]", "@@MDRBR@@").replace("%28", "(").replace("%29", ")")
-
-    def url_to_link(m):
-        url = m.group(1)
-        return f'<a href="{url}" target="_blank">{url}</a>'
-    s = URL_PATTERN.sub(url_to_link, s)
-
-    s = s.replace("@@MDLBR@@", "[[").replace("@@MDRBR@@", "]]")
-
-    if DOI_URL.search(s):
-        s = DOI_URL.sub(lambda mm: f'[**{mm.group(1)}**](https://doi.org/{mm.group(1)})', s)
-
-    return s
+        return f'<a href="{href}" target="_blank">{escape(label)}</a>'
+    return HREF_SNIPPET_RE.sub(repl, s)
 
 
 def _clean_doi(doi: str) -> str:
@@ -119,7 +97,7 @@ class MainPanel:
             if raw is None: continue
             vals = raw if isinstance(raw,list) else [raw]
             for v in vals:
-                s = v#_preserve_links_and_escape(str(v))
+                s = _href_snippet_to_anchor(str(v))
                 pairs.append((tag,s))
         return pairs
 
