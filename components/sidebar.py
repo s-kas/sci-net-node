@@ -61,7 +61,7 @@ class SidebarPanel:
         # Фильтр по папкам - только INBOX и Отправленные по умолчанию
         default_folders = []
         for folder in folders:
-            if folder in ['INBOX', 'Отправленные', 'Sent'] or 'sent' in folder.lower() or 'inbox' in folder.lower():
+            if folder in ['INBOX', 'Отправленные', 'Sent']:# or 'sent' in folder.lower() or 'inbox' in folder.lower():
                 default_folders.append(folder)
         
         # Если не найдены стандартные папки, берем первые две
