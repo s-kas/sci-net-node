@@ -1,5 +1,5 @@
 """
-Основная панель: конвертация только html-сниппетов href="…">Label в кликабельные ссылки в деталях. Убраны прочие манипуляции.
+Основная панель: в деталях перед любым 'href=' добавляется '<a '.
 """
 import re
 import streamlit as st
@@ -9,24 +9,17 @@ import base64
 import urllib.parse
 from html import escape
 
-HREF_SNIPPET_RE = re.compile(r"href=\"([^\"]+)\"[^>]*>([^<]+)", re.IGNORECASE)
-
 BG = "#fff"; TITLE_COLOR = "#1a1a1a"; AUTHOR_COLOR = "#333"; META_COLOR = "#555"; DOI_COLOR = "#1a0dab"; PDF_COLOR = "#0b8043"; HR_COLOR = "#e4e4e4"; BOX_COLOR = "#f8fafc"; INDEX_LABEL_COLOR = "#5f6368"; INDEX_VAL_COLOR = "#2d2d2d"
 
 
-def _to_compose(url: str) -> str:
-    return f"https://e.mail.ru/compose/?mailto={urllib.parse.quote(url, safe='')}" if url.lower().startswith('mailto:') else url
-
-
-def _href_snippet_to_anchor(text: str) -> str:
+def _add_anchor_prefix(text: str) -> str:
+    """Add '<a ' before every 'href=' occurrence."""
     if text is None:
         return ""
     s = str(text)
-    def repl(m):
-        href = _to_compose(m.group(1))
-        label = m.group(2).strip() or href
-        return f'<a href="{href}" target="_blank">{escape(label)}</a>'
-    return HREF_SNIPPET_RE.sub(repl, s)
+    # Simple replacement: href= -> <a href=
+    s = s.replace('href=', '<a href=')
+    return s
 
 
 def _clean_doi(doi: str) -> str:
@@ -97,7 +90,7 @@ class MainPanel:
             if raw is None: continue
             vals = raw if isinstance(raw,list) else [raw]
             for v in vals:
-                s = _href_snippet_to_anchor(str(v))
+                s = _add_anchor_prefix(str(v))
                 pairs.append((tag,s))
         return pairs
 
