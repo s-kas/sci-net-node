@@ -119,7 +119,7 @@ class MainPanel:
             if raw is None: continue
             vals = raw if isinstance(raw,list) else [raw]
             for v in vals:
-                s = _preserve_links_and_escape(str(v))
+                s = v#_preserve_links_and_escape(str(v))
                 pairs.append((tag,s))
         return pairs
 
