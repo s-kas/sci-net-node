@@ -1,24 +1,27 @@
 """
-Основная панель: в деталях перед любым 'href=' добавляется '<a '.
+Основная панель: добавлены чекбоксы выбора публикаций (включены по умолчанию), общий чекбокс "Все выбраны" и меню действий (три полоски) с опцией выгрузки RIS.
+Выгружается txt только по выбранным публикациям: индексы и значения, исключая значения в квадратных скобках и html-скрипты.
 """
 import re
 import streamlit as st
 from typing import List, Dict, Any
 from datetime import datetime
 import base64
-import urllib.parse
 from html import escape
 
 BG = "#fff"; TITLE_COLOR = "#1a1a1a"; AUTHOR_COLOR = "#333"; META_COLOR = "#555"; DOI_COLOR = "#1a0dab"; PDF_COLOR = "#0b8043"; HR_COLOR = "#e4e4e4"; BOX_COLOR = "#f8fafc"; INDEX_LABEL_COLOR = "#5f6368"; INDEX_VAL_COLOR = "#2d2d2d"
 
+HREF_PREFIX = 'href='
+
+EXCLUDE_BRACKET_VALUE_RE = re.compile(r"\[[^\]]*\]")
+STRIP_HTML_TAGS_RE = re.compile(r"<[^>]+>")
+
 
 def _add_anchor_prefix(text: str) -> str:
-    """Add '<a ' before every 'href=' occurrence."""
     if text is None:
         return ""
     s = str(text)
-    # Simple replacement: href= -> <a href=
-    s = s.replace('href=', '<a href=')
+    s = s.replace(HREF_PREFIX, '<a href=')
     s = s.replace(']', ']</a>')
     return s
 
@@ -42,26 +45,63 @@ class MainPanel:
     def render(self, publications: List[Dict[str, Any]], email_handler=None):
         if not publications:
             st.info("📭 Нет публикаций для отображения"); return
-        st.markdown(f"""
-        <style>
-        .gs-pub-item {{background:{BG}; padding:16px 12px 10px; border-radius:8px; margin-bottom:12px; border:1px solid #e4e4e4;}}
-        .gs-title {{font-size:1.08rem; font-weight:600; color:{TITLE_COLOR}; margin:2px 0; line-height:1.38;}}
-        .gs-authors {{color:{AUTHOR_COLOR}; font-size:0.95rem; margin-bottom:2px;}}
-        .gs-year,.gs-meta {{color:{META_COLOR}; font-size:0.96rem; display:inline;}}
-        .gs-doi a {{color:{DOI_COLOR}; font-family:ui-monospace,Menlo,monospace; font-size:0.97rem; text-decoration:underline;}}
-        .gs-details {{background:{BOX_COLOR}; border:1px solid #d0d7de; border-radius:8px; padding:13px 16px 12px; margin:10px 0 8px;}}
-        .gs-index-label {{color:{INDEX_LABEL_COLOR}; font-size:0.97rem; font-weight:600; margin-top:6px;}}
-        .gs-index-val {{color:{INDEX_VAL_COLOR}; font-size:0.98rem;}}
-        .gs-index-val a {{color:#1a0dab; text-decoration:underline;}}
-        </style>
-        """, unsafe_allow_html=True)
-        groups = self._group_by_doi(publications)
-        st.header("📚 Найдено публикаций: " + str(len(groups)))
-        first=True
-        for doi, data in groups.items():
-            if not first:
-                st.markdown(f'<hr style="border:0;height:1px;background:{HR_COLOR};margin:8px 0 10px"/>', unsafe_allow_html=True)
-            self._row(doi, data); first=False
+
+        # Инициализация состояния выбранности
+        if 'select_all' not in st.session_state:
+            st.session_state.select_all = True
+        if 'selected_pubs' not in st.session_state:
+            st.session_state.selected_pubs = {}
+
+        # Верхняя панель: чекбокс "Все выбраны" и кнопка меню (три полоски)
+        top_cols = st.columns([0.08, 0.74, 0.18])
+        with top_cols[0]:
+            all_checked = st.checkbox("", value=st.session_state.select_all, key="master_cb", help="Все выбраны")
+        with top_cols[1]:
+            st.markdown(f"<h2 style='margin:0'>Найдено публикаций: {len(publications)}</h2>", unsafe_allow_html=True)
+        with top_cols[2]:
+            action = st.popover("≡", use_container_width=True)
+            with action:
+                st.markdown("### Действия")
+                if st.button("Выгрузить все RIS в .txt", use_container_width=True):
+                    self._export_ris_txt(publications)
+
+        # Логика синхронизации master -> items
+        if all_checked != st.session_state.select_all:
+            st.session_state.select_all = all_checked
+            # Обновить все чекбоксы
+            for doi in self._doi_order(publications):
+                st.session_state.selected_pubs[doi] = all_checked
+
+        # Отрисовка карточек с чекбоксами слева
+        for i, (doi, data) in enumerate(self._group_by_doi(publications).items()):
+            if doi not in st.session_state.selected_pubs:
+                st.session_state.selected_pubs[doi] = True
+
+            row_cols = st.columns([0.06, 0.94])
+            with row_cols[0]:
+                val = st.checkbox("", value=st.session_state.selected_pubs[doi], key=f"cb_{doi}")
+                # Если пользователь изменил чекбокс
+                if val != st.session_state.selected_pubs[doi]:
+                    st.session_state.selected_pubs[doi] = val
+            with row_cols[1]:
+                self._row(doi, data)
+
+        # Логика items -> master
+        values = list(st.session_state.selected_pubs.values())
+        if values and all(values):
+            st.session_state.select_all = True
+        elif any(v is False for v in values):
+            st.session_state.select_all = False
+
+        # Обновить видимое состояние master чекбокса
+        st.session_state["master_cb"] = st.session_state.select_all
+
+    def _doi_order(self, pubs: List[Dict[str, Any]]):
+        order = []
+        for p in pubs:
+            doi = _clean_doi(p.get('doi') or p.get('DO'))
+            if doi: order.append(doi)
+        return order
 
     def _group_by_doi(self, pubs: List[Dict[str, Any]]):
         groups: Dict[str, Dict[str, Any]] = {}
@@ -142,3 +182,38 @@ class MainPanel:
             printed.add(val)
             tags=",".join(sorted(seen.get(val,{tag})))
             st.markdown(f'<div><span class="gs-index-label">{tags} - </span><span class="gs-index-val">{val}</span></div>', unsafe_allow_html=True)
+
+    def _export_ris_txt(self, pubs: List[Dict[str, Any]]):
+        # Фильтруем только выбранные публикации
+        selected = {doi for doi, v in st.session_state.selected_pubs.items() if v}
+        if not selected:
+            st.warning("Не выбрано ни одной публикации для выгрузки")
+            return
+        groups = self._group_by_doi(pubs)
+        lines = []
+        for doi, data in groups.items():
+            if doi not in selected:
+                continue
+            # Собираем все пары из emails.raw
+            all_pairs = []
+            for e in data.get('emails', []):
+                all_pairs.extend(e.get('raw', []))
+            # Уникальные строки по порядку появления
+            seen = set()
+            for tag, val in all_pairs:
+                # Исключаем значения в квадратных скобках и html-скрипты
+                if EXCLUDE_BRACKET_VALUE_RE.search(val):
+                    continue
+                # Удаляем html теги целиком
+                clean = STRIP_HTML_TAGS_RE.sub('', val)
+                clean = clean.strip()
+                if not clean:
+                    continue
+                line = f"{tag}  - {clean}"
+                if line not in seen:
+                    seen.add(line)
+                    lines.append(line)
+            # Разделитель между публикациями
+            lines.append("ER  -")
+        content = "\n".join(lines)
+        st.download_button("Скачать RIS .txt", data=content, file_name="export_ris.txt", mime="text/plain")
