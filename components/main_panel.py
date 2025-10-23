@@ -19,7 +19,7 @@ def _add_anchor_prefix(text: str) -> str:
     s = str(text)
     # Simple replacement: href= -> <a href=
     s = s.replace('href=', '<a href=')
-    s = s.replace('[', '>[')
+    s = s.replace(']', ']</a>')
     return s
 
 
